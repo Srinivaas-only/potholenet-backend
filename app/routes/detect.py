@@ -73,8 +73,8 @@ async def detect_objects(image: UploadFile = File(...)):
 )
 async def detect_dual_mode(
     image: UploadFile = File(...),
-    mode: Optional[str] = Query("driving", regex="^(reverse|driving)$"),
-    velocity_kmh: Optional[float] = Query(None, ge=-150, le=250),
+    mode: Optional[str] = Form("driving"),
+    velocity_kmh: Optional[float] = Form(None),
 ):
     """
     Dual-mode detection endpoint optimized for reverse and driving scenarios.
