@@ -20,12 +20,14 @@ from machine import UART, Pin
 # CONFIGURATION (Update these for your setup)
 # ============================================================================
 
-# WiFi Configuration
-WIFI_SSID = "YOUR_SSID"
-WIFI_PASSWORD = "YOUR_PASSWORD"
+# Access Point (AP) Configuration - ESP32-CAM creates its own WiFi network
+AP_SSID = "PotholeNet-ESP32"  # WiFi network name (broadcast by ESP32)
+AP_PASSWORD = "pothole123"     # WiFi password for connecting to this device
+AP_IP = "192.168.4.1"          # Default IP of ESP32 in AP mode
 
 # Backend Server Configuration
-BACKEND_HOST = "192.168.1.100"  # Change to your server IP
+# When using AP mode, connect to the ESP32 directly via its IP
+BACKEND_HOST = "192.168.4.1"   # ESP32 AP IP address
 BACKEND_PORT = 8000
 BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/detect/dual-mode"
 
@@ -246,43 +248,61 @@ camera_ctrl = CameraController()
 # ============================================================================
 
 class WiFiManager:
-    def __init__(self, ssid, password):
-        self.ssid = ssid
-        self.password = password
-        self.wlan = network.WLAN(network.STA_IF)
+    def __init__(self, ap_ssid, ap_password):
+        """Initialize ESP32 as Access Point"""
+        self.ap_ssid = ap_ssid
+        self.ap_password = ap_password
+        self.ap = network.WLAN(network.AP_IF)
     
     def connect(self, timeout=10):
-        """Connect to WiFi"""
+        """Start Access Point"""
         try:
-            self.wlan.active(True)
-            if not self.wlan.isconnected():
-                log("INFO", f"Connecting to {self.ssid}...")
-                self.wlan.connect(self.ssid, self.password)
-                
-                start = time.time()
-                while not self.wlan.isconnected() and (time.time() - start) < timeout:
-                    led.pulse()
-                    time.sleep(0.5)
-                
-                if self.wlan.isconnected():
-                    ip_info = self.wlan.ifconfig()
-                    log("INFO", f"Connected! IP: {ip_info[0]}")
-                    led.on()
-                    return True
-                else:
-                    log("ERROR", "WiFi connection timeout")
-                    led.off()
-                    return False
-            else:
-                log("INFO", f"Already connected: {self.wlan.ifconfig()[0]}")
-                led.on()
-                return True
+            self.ap.active(False)  # Disable AP first
+            time.sleep(0.5)
+            
+            log("INFO", f"Starting Access Point: {self.ap_ssid}...")
+            self.ap.active(True)
+            
+            # Configure AP with SSID, password, and channel
+            # auth_mode: 4 = WPA2-PSK, 3 = WPA-PSK, 0 = OPEN
+            self.ap.config(
+                essid=self.ap_ssid,
+                password=self.ap_password,
+                authmode=4,  # WPA2-PSK
+                channel=1,
+                hidden=False,
+                max_clients=4
+            )
+            
+            time.sleep(1)  # Wait for AP to start
+            
+            # Get AP IP info
+            ip_info = self.ap.ifconfig()
+            ap_ip = ip_info[0]
+            
+            log("INFO", f"✓ Access Point Active!")
+            log("INFO", f"  Network: {self.ap_ssid}")
+            log("INFO", f"  Password: {self.ap_password}")
+            log("INFO", f"  IP: {ap_ip}")
+            log("INFO", f"  Backend: http://{ap_ip}:{BACKEND_PORT}/detect/dual-mode")
+            log("INFO", "")
+            log("INFO", "Connect your device:")
+            log("INFO", f"  1. WiFi SSID: {self.ap_ssid}")
+            log("INFO", f"  2. Password: {self.ap_password}")
+            log("INFO", f"  3. Access API at http://{ap_ip}:8000")
+            log("INFO", "")
+            
+            led.blink(3)  # Blink to indicate AP is ready
+            return True
+        
         except Exception as e:
-            log("ERROR", f"WiFi connect error: {e}")
+            log("ERROR", f"AP startup error: {e}")
+            led.off()
             return False
     
     def is_connected(self):
-        return self.wlan.isconnected()
+        """Check if AP is active"""
+        return self.ap.active()
 
 # ============================================================================
 # HTTP CLIENT
@@ -380,7 +400,7 @@ class HTTPClient:
 
 class DashcamApp:
     def __init__(self):
-        self.wifi_mgr = WiFiManager(WIFI_SSID, WIFI_PASSWORD)
+        self.wifi_mgr = WiFiManager(AP_SSID, AP_PASSWORD)
         self.http_client = HTTPClient(BACKEND_HOST, BACKEND_PORT)
         self.gps = GPSParser(GPS_UART_NUM, GPS_RX, GPS_TX, GPS_BAUD)
         self.last_frame_time = 0

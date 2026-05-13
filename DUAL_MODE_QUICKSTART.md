@@ -2,7 +2,23 @@
 ## Quick Start Guide
 
 **Last Updated**: May 13, 2026  
-**Status**: Production Ready
+**Status**: Production Ready  
+**WiFi Mode**: Access Point (AP) - Device creates its own WiFi network
+
+---
+
+## 📌 WiFi Mode: Access Point (AP)
+
+The firmware now uses **Access Point (AP) Mode**. The device creates its own WiFi network:
+
+| Feature | Details |
+|---------|---------|
+| **Mode** | Device creates WiFi network |
+| **Network Name** | "PotholeNet-ESP32" (customizable) |
+| **Password** | "pothole123" (customizable) |
+| **IP** | 192.168.4.1 (ESP32) |
+| **Setup** | No existing WiFi needed - works anywhere! |
+| **Max Devices** | Up to 4 devices can connect |
 
 ---
 
@@ -83,19 +99,27 @@ machine.soft_reset()
 EOF
 ```
 
-### Step 3: Configure WiFi (1 minute)
+### Step 3: Configure Access Point Mode (Optional)
 
-Edit `esp32_cam_firmware.py` before uploading:
+Edit `esp32_cam_firmware.py` to customize the WiFi network:
 
 ```python
-# Line ~40-42
-WIFI_SSID = "YourNetworkName"
-WIFI_PASSWORD = "YourPassword"
+# Line ~26-34 (Access Point Configuration)
+AP_SSID = "PotholeNet-ESP32"        # WiFi network name
+AP_PASSWORD = "pothole123"          # WiFi password
 
-# Line ~45-47
-BACKEND_HOST = "192.168.1.100"  # Your computer running FastAPI
+# Backend stays the same
+BACKEND_HOST = "192.168.4.1"        # ESP32's AP IP (don't change)
 BACKEND_PORT = 8000
 ```
+
+**Customize if you want:**
+```python
+AP_SSID = "MyDashcam"               # Your preferred name
+AP_PASSWORD = "MySecurePassword123" # 8+ characters
+```
+
+**📖 For detailed setup instructions**: See [ESP32_CAM_SETUP_GUIDE.md](ESP32_CAM_SETUP_GUIDE.md)
 
 ---
 
@@ -164,15 +188,20 @@ Both modes return:
 
 ## Testing
 
+**Note:** After uploading firmware, the ESP32 creates its own WiFi network "PotholeNet-ESP32". 
+Connect your device to this network first, then test.
+
 ### Scenario 1: Driving Forward (Normal Mode)
 
 ```bash
+# Make sure you're connected to "PotholeNet-ESP32" WiFi first!
+
 # Simulate forward motion at 50 km/h
 curl -X POST \
   -F "image=@street_with_pothole.jpg" \
   -F "mode=driving" \
   -F "velocity_kmh=50.0" \
-  http://localhost:8000/detect/dual-mode
+  http://192.168.4.1:8000/detect/dual-mode
 
 # Expected: Pothole detection ENABLED
 # Response time: ~400-600ms
@@ -181,12 +210,11 @@ curl -X POST \
 ### Scenario 2: Backing Up (Reverse Mode)
 
 ```bash
-# Simulate reverse at -5 km/h
 curl -X POST \
   -F "image=@street_with_pothole.jpg" \
   -F "mode=reverse" \
   -F "velocity_kmh=-5.0" \
-  http://localhost:8000/detect/dual-mode
+  http://192.168.4.1:8000/detect/dual-mode
 
 # Expected: Pothole detection DISABLED (always false)
 # Response time: ~80-120ms
@@ -199,7 +227,7 @@ curl -X POST \
 curl -X POST \
   -F "image=@street_with_pothole.jpg" \
   -F "velocity_kmh=-5.0" \
-  http://localhost:8000/detect/dual-mode
+  http://192.168.4.1:8000/detect/dual-mode
 
 # mode auto-detected as "REVERSE" from negative velocity
 ```
@@ -213,10 +241,19 @@ curl -X POST \
 [INFO] PotholeNet ESP32-CAM Dashboard Camera Starting
 [INFO] ==================================================
 [INFO] Camera initialized successfully
-[INFO] Connecting to MyNetwork...
-[INFO] Connected! IP: 192.168.1.50
+[INFO] Starting Access Point: PotholeNet-ESP32...
+[INFO] ✓ Access Point Active!
+[INFO]   Network: PotholeNet-ESP32
+[INFO]   Password: pothole123
+[INFO]   IP: 192.168.4.1
+[INFO]   Backend: http://192.168.4.1:8000/detect/dual-mode
+[INFO]
+[INFO] Connect your device:
+[INFO]   1. WiFi SSID: PotholeNet-ESP32
+[INFO]   2. Password: pothole123
+[INFO]   3. Access API at http://192.168.4.1:8000
+[INFO]
 [INFO] Ready for detection. Starting capture loop...
-[INFO] Backend: http://192.168.1.100:8000/detect/dual-mode
 [DEBUG] Capturing frame 1...
 [INFO] Sending frame 1 (65432 bytes, mode=driving, velocity=45.2 km/h)
 [INFO] Alert: ⚠️ POTHOLE DETECTED | 🚗 VEHICLE NEARBY (Mode: DRIVING)

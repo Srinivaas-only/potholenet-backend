@@ -102,28 +102,34 @@ pip install adafruit-ampy
 
 ## Firmware Installation
 
-### Step 1: Update Configuration
+### Step 1: Update Configuration (Optional)
 
-Edit `esp32_cam_firmware.py` and set your network details:
+Edit `esp32_cam_firmware.py` to customize Access Point settings:
 
 ```python
-# WiFi Configuration
-WIFI_SSID = "YOUR_SSID"
-WIFI_PASSWORD = "YOUR_PASSWORD"
+# Access Point (AP) Configuration
+# ESP32-CAM creates its own WiFi network
+AP_SSID = "PotholeNet-ESP32"        # WiFi network name (what you see in WiFi list)
+AP_PASSWORD = "pothole123"          # WiFi password (8+ characters)
 
-# Backend Server (your FastAPI)
-BACKEND_HOST = "192.168.1.100"  # Change to your server IP
+# Backend Server Configuration
+BACKEND_HOST = "192.168.4.1"        # ESP32's AP IP (don't change)
 BACKEND_PORT = 8000
 ```
+
+**Customize to your preference:**
+```python
+AP_SSID = "MyDashcam"               # Change network name
+AP_PASSWORD = "MySecurePassword123" # Change password (8+ chars)
+```
+
+**Note**: `BACKEND_HOST` must stay as `192.168.4.1` (ESP32's default AP IP)
 
 ### Step 2: Upload Firmware
 
 ```bash
 # Copy firmware to device as main.py (auto-runs on boot)
 ampy --port COM3 put esp32_cam_firmware.py main.py
-
-# Or upload both firmware and a helper module
-ampy --port COM3 put esp32_cam_firmware.py
 ```
 
 ### Step 3: Verify Upload
@@ -134,7 +140,7 @@ ampy --port COM3 ls
 
 # Expected output:
 # boot.py
-# main.py  (or esp32_cam_firmware.py)
+# main.py
 ```
 
 ### Step 4: Restart Device
@@ -153,15 +159,18 @@ Or manually reset by pressing the RST button on the ESP32-CAM.
 
 ## Configuration
 
-### WiFi Settings
+### Access Point (AP) Mode Settings
 ```python
-WIFI_SSID = "YourNetworkName"
-WIFI_PASSWORD = "YourPassword"
+# ESP32-CAM broadcasts its own WiFi network
+AP_SSID = "PotholeNet-ESP32"        # Network name (visible in WiFi list)
+AP_PASSWORD = "pothole123"          # WiFi password
+AP_IP = "192.168.4.1"               # ESP32's IP (fixed, don't change)
 ```
 
 ### Backend Server
 ```python
-BACKEND_HOST = "192.168.1.100"      # Your computer/server running FastAPI
+# When using AP mode, connect directly to ESP32's IP
+BACKEND_HOST = "192.168.4.1"        # ESP32's AP IP (must match AP_IP)
 BACKEND_PORT = 8000
 BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/detect/dual-mode"
 ```
@@ -194,44 +203,86 @@ The firmware automatically switches modes:
 
 ## Testing
 
-### 1. Check Serial Output
+### 1. Connect to ESP32's WiFi
+
+Once device starts, it broadcasts a WiFi network:
+- **Network Name (SSID)**: `PotholeNet-ESP32`
+- **Password**: `pothole123`
+
+**Steps to connect:**
+
+#### Windows/Mac/Linux:
+1. Open WiFi settings
+2. Look for network: **"PotholeNet-ESP32"**
+3. Click "Connect"
+4. Enter password: **"pothole123"**
+5. Wait for connection
+
+#### Android:
+1. Settings → WiFi
+2. Scan networks
+3. Tap "PotholeNet-ESP32"
+4. Enter "pothole123"
+5. Connect
+
+#### iPhone:
+1. Settings → WiFi
+2. Select "PotholeNet-ESP32"
+3. Enter "pothole123"
+4. Tap Join
+
+### 2. Check Serial Output
 
 ```bash
-# Monitor ESP32 output (use any serial monitor at 115200 baud)
-ampy --port COM3 run << 'EOF'
-import sys
-sys.stdout = machine.UART(0, 115200)
-EOF
+# Monitor ESP32 output using any serial monitor at 115200 baud
+# Or use PuTTY, Arduino IDE Serial Monitor, or similar tools
 ```
 
-Or use a GUI tool like PuTTY or Arduino IDE Serial Monitor (115200 baud).
+**Connect with:**
+- **Port**: COM3 (or your device's port)
+- **Baud Rate**: 115200
+- **Data Bits**: 8
+- **Stop Bits**: 1
+- **Parity**: None
 
-### 2. Expected Serial Output
+### 3. Expected Serial Output
 
 ```
 [INFO] ==================================================
 [INFO] PotholeNet ESP32-CAM Dashboard Camera Starting
 [INFO] ==================================================
 [INFO] Camera initialized successfully
-[INFO] Connecting to YourSSID...
-[INFO] Connected! IP: 192.168.1.50
+[INFO] Starting Access Point: PotholeNet-ESP32...
+[INFO] ✓ Access Point Active!
+[INFO]   Network: PotholeNet-ESP32
+[INFO]   Password: pothole123
+[INFO]   IP: 192.168.4.1
+[INFO]   Backend: http://192.168.4.1:8000/detect/dual-mode
+[INFO]
+[INFO] Connect your device:
+[INFO]   1. WiFi SSID: PotholeNet-ESP32
+[INFO]   2. Password: pothole123
+[INFO]   3. Access API at http://192.168.4.1:8000
+[INFO]
 [INFO] Ready for detection. Starting capture loop...
-[INFO] Backend: http://192.168.1.100:8000/detect/dual-mode
 [DEBUG] Capturing frame 1...
 [INFO] Sending frame 1 (65432 bytes, mode=driving, velocity=45.2 km/h)
 [INFO] Alert: ⚠️ POTHOLE DETECTED | 🚗 VEHICLE NEARBY (Mode: DRIVING)
 [DEBUG] Free memory: 245632 bytes
 ```
 
-### 3. Test with curl (from your computer)
+### 4. Test with curl (from your connected device)
+
+**Important**: First connect your computer/phone to the "PotholeNet-ESP32" WiFi network!
 
 ```bash
 # Test dual-mode endpoint with image file
+# Make sure you're on the PotholeNet-ESP32 WiFi network first!
 curl -X POST \
   -F "image=@test_image.jpg" \
   -F "mode=driving" \
   -F "velocity_kmh=50.0" \
-  http://192.168.1.100:8000/detect/dual-mode
+  http://192.168.4.1:8000/detect/dual-mode
 
 # Expected response:
 # {
@@ -245,15 +296,16 @@ curl -X POST \
 # }
 ```
 
-### 4. Test Reverse Mode
+### 5. Test Reverse Mode
 
 ```bash
 # Simulate reverse (negative velocity)
+# Connected to PotholeNet-ESP32 WiFi first!
 curl -X POST \
   -F "image=@test_image.jpg" \
   -F "mode=reverse" \
   -F "velocity_kmh=-10.0" \
-  http://192.168.1.100:8000/detect/dual-mode
+  http://192.168.4.1:8000/detect/dual-mode
 
 # In reverse mode:
 # - Pothole detection is SKIPPED (always false)
@@ -286,22 +338,24 @@ for pin in pins_to_test:
     p.off()
 ```
 
-### WiFi Won't Connect
+### Access Point Won't Start
 
-**Problem**: `[ERROR] WiFi connection timeout`
+**Problem**: `[ERROR] AP startup error` or "PotholeNet-ESP32" not appearing in WiFi list
 
 **Solutions**:
-1. Verify SSID and password are correct
-2. Check if WiFi 2.4GHz is enabled (ESP32 doesn't support 5GHz)
-3. Check distance to router
-4. Try manual WiFi connection:
+1. Verify AP_SSID and AP_PASSWORD in firmware
+2. Check antenna is properly connected to ESP32
+3. Verify power supply is stable (USB port may need external power)
+4. Restart ESP32 (press RST button)
+5. Check if AP_PASSWORD is at least 8 characters
 
 ```python
+# Diagnostic: Test AP mode manually
 import network
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
-wlan.connect("SSID", "PASSWORD")
-print(wlan.ifconfig())  # Should show IP address
+ap = network.WLAN(network.AP_IF)
+ap.active(True)
+ap.config(essid='TestNet', password='testpass123')
+print(ap.ifconfig())  # Should show 192.168.4.1
 ```
 
 ### Backend Won't Respond
@@ -309,11 +363,12 @@ print(wlan.ifconfig())  # Should show IP address
 **Problem**: `[ERROR] HTTP POST error` or `[ERROR] Detection failed`
 
 **Solutions**:
-1. Verify backend IP: `ping 192.168.1.100`
-2. Check backend is running: `python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`
-3. Verify endpoint exists: `curl http://192.168.1.100:8000/docs`
-4. Check firewall allows port 8000
-5. Monitor backend logs for errors
+1. Verify you're connected to "PotholeNet-ESP32" WiFi
+2. Check ESP32 IP: `ping 192.168.4.1` should respond
+3. Verify backend is running on ESP32 (check serial output shows "Access Point Active!")
+4. Test endpoint: `curl http://192.168.4.1:8000/docs` should work
+5. Check firewall allows port 8000
+6. Monitor ESP32 serial logs for HTTP errors
 
 ### Out of Memory
 
