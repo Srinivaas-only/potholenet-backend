@@ -12,6 +12,11 @@ class VehicleType(str, Enum):
     bicycle = "bicycle"
 
 
+class DetectionMode(str, Enum):
+    reverse = "reverse"
+    driving = "driving"
+
+
 # ---------- Detection Schemas ----------
 
 class PotholeDetail(BaseModel):
@@ -39,6 +44,16 @@ class DetectionResponse(BaseModel):
     vehicles: DetectionCategory
     animals: DetectionCategory
     alert: str
+
+
+class DualModeDetectionResponse(BaseModel):
+    mode: str  # "REVERSE" or "DRIVING"
+    pothole: DetectionCategory
+    humans: DetectionCategory
+    vehicles: DetectionCategory
+    animals: DetectionCategory
+    alert: str
+    velocity_kmh: Optional[float] = None
 
 
 # ---------- Report Schemas ----------

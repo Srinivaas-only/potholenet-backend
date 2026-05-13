@@ -206,6 +206,83 @@ class Detector:
 
         return {"humans": humans, "vehicles": vehicles, "animals": animals}
 
+    def run_detection_dual_mode(
+        self, image_bytes: bytes, mode: str = "driving", velocity_kmh: Optional[float] = None
+    ) -> dict:
+        """
+        Run detection in dual-mode (reverse vs driving).
+        
+        Args:
+            image_bytes: Raw image data
+            mode: "reverse" or "driving"
+            velocity_kmh: Optional vehicle velocity to auto-detect reverse (if negative)
+        
+        Returns:
+            Detection result optimized for the mode
+        """
+        # Auto-detect reverse based on velocity if provided
+        if velocity_kmh is not None and velocity_kmh < 0:
+            mode = "reverse"
+            logger.info(f"Auto-detected REVERSE mode (velocity: {velocity_kmh} km/h)")
+        
+        logger.info(f"Running {mode.upper()} detection")
+        
+        # Decode image
+        img = self.decode_image(image_bytes)
+        if img is None:
+            raise ValueError("Could not decode image. Ensure it is a valid JPEG/PNG.")
+
+        # Save to temp file for model inference
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".jpg")
+        try:
+            cv2.imwrite(temp_path, img)
+
+            if mode.lower() == "reverse":
+                # REVERSE MODE: Fast YOLO-only detection (<100ms)
+                logger.debug("REVERSE mode: Running YOLO only (lightweight)")
+                yolo_results = self._run_yolo_detection(temp_path)
+                
+                # Skip pothole detection in reverse
+                pothole_results = {"detected": False, "count": 0, "details": []}
+                
+            else:  # driving mode
+                # DRIVING MODE: Full detection with Roboflow + YOLO (<500ms)
+                logger.debug("DRIVING mode: Running Roboflow + YOLO (full accuracy)")
+                settings = get_settings()
+                pothole_results = self._run_pothole_detection(
+                    temp_path, settings.POTHOLE_CONFIDENCE_THRESHOLD
+                )
+                yolo_results = self._run_yolo_detection(temp_path)
+
+        finally:
+            # Clean up temp file
+            os.close(temp_fd)
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+        # Build alert string
+        alerts = []
+        if pothole_results["detected"]:
+            alerts.append("⚠️ POTHOLE DETECTED")
+        if yolo_results["humans"]["detected"]:
+            alerts.append("🧍 HUMAN ON ROAD")
+        if yolo_results["vehicles"]["detected"]:
+            alerts.append("🚗 VEHICLE NEARBY")
+        if yolo_results["animals"]["detected"]:
+            alerts.append("🐄 ANIMAL ON ROAD")
+
+        alert_str = " | ".join(alerts) if alerts else "✅ ALL CLEAR"
+
+        return {
+            "mode": mode.upper(),
+            "pothole": pothole_results,
+            "humans": yolo_results["humans"],
+            "vehicles": yolo_results["vehicles"],
+            "animals": yolo_results["animals"],
+            "alert": alert_str,
+            "velocity_kmh": velocity_kmh,
+        }
+
 
 # Module-level singleton
 _detector: Optional[Detector] = None
