@@ -122,6 +122,19 @@ class HealthResponse(BaseModel):
     uptime_seconds: float
 
 
+# ---------- Location Schemas ----------
+
+class LocationResponse(BaseModel):
+    ip: str
+    latitude: float
+    longitude: float
+    city: Optional[str] = None
+    region: Optional[str] = None
+    country: Optional[str] = None
+    accuracy_km: float = 50.0
+    source: str = "ip_geolocation"
+
+
 # ---------- Error Schema ----------
 
 class ErrorResponse(BaseModel):

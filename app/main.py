@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import create_tables
-from app.routes import detect, reports, health
+from app.routes import detect, reports, health, location
 from app.services.detector import get_detector
 
 # Configure logging
@@ -71,6 +71,7 @@ async def startup_event():
 app.include_router(detect.router)
 app.include_router(reports.router)
 app.include_router(health.router)
+app.include_router(location.router)
 
 
 @app.get("/", tags=["root"])
