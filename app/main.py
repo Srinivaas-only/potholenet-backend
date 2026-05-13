@@ -1,4 +1,6 @@
 import logging
+from typing import Dict, Optional
+import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +18,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+# Global state for phone GPS speed and location
+# Updated by phone app via POST /location/update
+# Used by ESP32-CAM via GET /location/current-speed
+gps_state: Dict[str, Optional[float]] = {
+    "velocity_kmh": None,  # Latest speed from phone GPS
+    "latitude": None,      # Latest latitude from phone GPS
+    "longitude": None,     # Latest longitude from phone GPS
+    "last_update": None,   # Timestamp of last update
+}
 
 app = FastAPI(
     title="PotholeNet API",

@@ -13,6 +13,7 @@ Real-time dashcam detection with automatic reverse/driving mode switching based 
 5. [Testing](#testing)
 6. [Troubleshooting](#troubleshooting)
 7. [API Documentation](#api-documentation)
+8. [Phone Integration](#phone-integration)
 
 ---
 
@@ -21,7 +22,6 @@ Real-time dashcam detection with automatic reverse/driving mode switching based 
 ### Components Needed
 - **AI Thinker ESP32-CAM** (with USB port)
 - **USB Cable** (micro USB)
-- **Optional: GPS Module** (NEO-6M with UART output)
 - **Optional: OLED Display** (for live status)
 - **Micro SD Card** (for video recording - optional)
 
@@ -36,8 +36,6 @@ GPIO Assignments:
 - 0  : XCLK (camera clock)
 - 4  : Status LED (optional)
 - 5  : D0 (camera)
-- 16 : GPS RX (if using GPS module)
-- 17 : GPS TX (if using GPS module)
 - 18 : D1 (camera)
 - 19 : D2 (camera)
 - 21 : D3 (camera)
@@ -54,15 +52,14 @@ GPIO Assignments:
 - 39 : D6 (camera)
 ```
 
-### GPS Module Connection (Optional)
-If using NEO-6M GPS:
-```
-NEO-6M    ->  ESP32-CAM
-GND       ->  GND
-VCC       ->  5V (via 3.3V regulator)
-TX        ->  GPIO 16 (RX2)
-RX        ->  GPIO 17 (TX2)
-```
+### Phone GPS Integration
+
+**No hardware GPS module needed!** Speed is provided by the phone app via WiFi:
+- Phone app captures GPS location continuously
+- Phone calculates vehicle speed from location deltas
+- Phone sends speed to backend via `POST /location/update`
+- Backend determines REVERSE/DRIVING mode automatically
+- ESP32-CAM captures frames only (no GPS hardware)
 
 ---
 
@@ -183,15 +180,19 @@ CAMERA_PINS = {
 }
 
 FRAME_INTERVAL = 1.0  # Capture every 1 second
-LOCATION_INTERVAL = 5.0  # Update GPS every 5 seconds
 ```
 
-### GPS Configuration
+### Phone GPS Configuration
+
+**No configuration needed for GPS!** The phone app provides speed:
+
 ```python
-GPS_UART_NUM = 2       # UART 2 (default for RX2/TX2)
-GPS_BAUD = 9600        # Standard GPS baud rate
-GPS_RX = 16            # GPIO 16
-GPS_TX = 17            # GPIO 17
+# Backend automatically receives phone speed via:
+# POST /location/update?velocity_kmh=45.5
+
+# Mode detection is automatic:
+# - velocity_kmh < 0: REVERSE mode
+# - velocity_kmh >= 0: DRIVING mode
 ```
 
 ### Detection Modes
@@ -382,24 +383,25 @@ print(ap.ifconfig())  # Should show 192.168.4.1
    ```
 3. Restart device to clear memory leaks
 
-### GPS Data Not Updating
+### Phone GPS Speed Not Updating
 
-**Problem**: `velocity_kmh` always 0
+**Problem**: Backend always uses default DRIVING mode
 
 **Solutions**:
-1. Verify GPS module is powered (red LED should be on)
-2. Check serial pins (GPIO 16/17) are correct
-3. Verify GPS has satellite lock (takes 30-60 seconds)
-4. Test GPS directly:
-
-```python
-from machine import UART
-uart = UART(2, 9600, rx=16, tx=17, timeout=100)
-while True:
-    if uart.any():
-        line = uart.readline()
-        print(line)  # Should see NMEA sentences like $GPRMC...
-```
+1. Verify phone app is running and has GPS enabled
+2. Check phone has location permission for the app
+3. Phone must be connected to PotholeNet-ESP32 WiFi
+4. Test phone GPS manually:
+   ```bash
+   curl -X POST http://192.168.4.1:8000/location/update -F "velocity_kmh=45.5"
+   # Should return: {"status":"ok","velocity_kmh":45.5,...}
+   ```
+5. Check backend logs for speed updates:
+   ```bash
+   # Run backend with debug logging
+   uvicorn app.main:app --log-level debug
+   # Look for: "Phone GPS speed updated: X km/h"
+   ```
 
 ---
 
@@ -413,8 +415,16 @@ while True:
 | Parameter | Type | Required | Range | Description |
 |-----------|------|----------|-------|-------------|
 | `image` | File (JPEG/PNG) | ✓ | - | Camera frame image |
-| `mode` | String | ✗ | `reverse`, `driving` | Detection mode (default: driving) |
-| `velocity_kmh` | Float | ✗ | -150 to 250 | Vehicle velocity (negative = reverse) |
+| `mode` | String | ✗ | `reverse`, `driving` | Force mode (default: auto-detect from phone GPS) |
+
+**How Mode Detection Works**:
+1. Phone sends current speed via `POST /location/update`
+2. Backend stores latest speed from phone GPS
+3. When ESP32 sends image via `/detect/dual-mode`:
+   - If `mode` parameter = "reverse" or "driving": use that
+   - If `mode` = None: auto-detect from phone speed
+     - velocity_kmh < 0: REVERSE mode
+     - velocity_kmh ≥ 0: DRIVING mode
 
 **Response**:
 ```json
@@ -474,6 +484,164 @@ while True:
 - **Pothole Detection**: ENABLED
 - **Use Case**: Forward motion, highway driving, normal operation
 
+### Phone Location Update Endpoint
+
+**URL**: `POST /location/update`
+
+**Purpose**: Phone app sends current GPS speed and location to determine mode and record pothole locations
+
+**Parameters**:
+| Parameter | Type | Required | Range | Description |
+|-----------|------|----------|-------|-------------|
+| `velocity_kmh` | float | ✓ | -150 to 250 | Vehicle velocity in km/h (negative = reverse) |
+| `latitude` | float | ✗ | -90 to 90 | Phone GPS latitude |
+| `longitude` | float | ✗ | -180 to 180 | Phone GPS longitude |
+
+**Example** (Phone app calls this every GPS update):
+```bash
+# Phone detects moving at 45.5 km/h forward at location
+curl -X POST http://192.168.4.1:8000/location/update \
+  -F "velocity_kmh=45.5" \
+  -F "latitude=3.1234" \
+  -F "longitude=101.5678"
+
+# Phone detects reversing at -10 km/h
+curl -X POST http://192.168.4.1:8000/location/update \
+  -F "velocity_kmh=-10.0" \
+  -F "latitude=3.1234" \
+  -F "longitude=101.5678"
+```
+
+**Response**:
+```json
+{
+  "status": "ok",
+  "velocity_kmh": 45.5,
+  "latitude": 3.1234,
+  "longitude": 101.5678,
+  "timestamp": 1715587200.123
+}
+```
+
+### Get Current Speed Endpoint
+
+**URL**: `GET /location/current-speed`
+
+**Purpose**: Check the latest phone GPS speed and location stored by backend
+
+**Response**:
+```json
+{
+  "velocity_kmh": 45.5,
+  "latitude": 3.1234,
+  "longitude": 101.5678,
+  "last_update": 1715587200.123
+}
+```
+
+If phone hasn't sent an update yet:
+```json
+{
+  "velocity_kmh": null,
+  "latitude": null,
+  "longitude": null,
+  "last_update": null
+}
+```
+
+---
+
+## Phone Integration
+
+### How Phone GPS Works
+
+The system uses the **phone app to provide vehicle speed** for mode detection:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ PHONE APP                                                     │
+│ ├─ GPS Location Sensor (every 1-2 seconds)                  │
+│ ├─ Calculate Velocity (current location - previous location) │
+│ └─ Send POST /location/update with velocity_kmh             │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│ BACKEND (FastAPI)                                             │
+│ ├─ Receive velocity from phone                              │
+│ ├─ Store latest velocity in memory                          │
+│ └─ ESP32 queries /detect/dual-mode → auto-detect mode      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│ ESP32-CAM                                                     │
+│ ├─ Capture JPEG frame                                       │
+│ ├─ Send to /detect/dual-mode (no GPS needed)                │
+│ └─ Backend uses phone's speed to choose REVERSE or DRIVING  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Phone App Implementation
+
+Your phone app should:
+
+1. **Enable GPS Location** (high accuracy)
+2. **Calculate speed** from location changes:
+   ```python
+   # Pseudocode
+   distance = calculate_distance(prev_lat, prev_lng, curr_lat, curr_lng)  # meters
+   time_delta = current_time - prev_time  # seconds
+   velocity_kmh = (distance / time_delta) * 3.6  # convert m/s to km/h
+   ```
+3. **Send speed to backend** every 1-2 seconds:
+   ```python
+   POST /location/update
+   velocity_kmh = velocity_kmh (or negative if reversing)
+   ```
+
+### Mode Detection Logic
+
+Backend determines mode automatically:
+
+```python
+if phone_velocity < 0:
+    mode = "REVERSE"  # Fast path: YOLO only, <100ms
+else:
+    mode = "DRIVING"  # Full path: Pothole + YOLO, <500ms
+```
+
+### Requirements for Phone App
+
+- **Location Permission**: Required to get GPS coordinates
+- **WiFi Connection**: Must connect to "PotholeNet-ESP32" network
+- **HTTP Support**: POST requests to `http://192.168.4.1:8000`
+- **Continuous GPS**: Should update speed while driving
+- **Background Mode**: Should send updates even if app is minimized
+
+### Testing Phone Integration
+
+```bash
+# Test if backend receives phone location updates
+curl -X POST http://192.168.4.1:8000/location/update \
+  -F "velocity_kmh=45.5"
+
+# Should return:
+# {"status":"ok","velocity_kmh":45.5,"timestamp":1715587200.123}
+
+# Check current speed stored by backend
+curl http://192.168.4.1:8000/location/current-speed
+
+# Should return:
+# {"velocity_kmh":45.5,"last_update":1715587200.123}
+
+# Now send image - backend will use phone's speed to auto-detect mode
+curl -X POST http://192.168.4.1:8000/detect/dual-mode \
+  -F "image=@test_image.jpg"
+
+# Check response to verify correct mode was selected
+```
+
 ---
 
 ## Performance Metrics
@@ -490,7 +658,7 @@ while True:
 
 ## Next Steps
 
-1. **Integrate with Mobile App**: Stream results to Flutter app
+1. **Integrate with Mobile App**: Implement POST /location/update in phone app
 2. **Add MQTT**: Replace HTTP POST with MQTT for lower latency
 3. **Edge TFLite**: Convert models to TensorFlow Lite for local inference
 4. **Cloud Storage**: Upload detections to cloud database
@@ -517,3 +685,55 @@ MIT License - See LICENSE file
 **Last Updated**: May 13, 2026  
 **Firmware Version**: 1.0.0  
 **Backend Version**: 1.0.0
+
+---
+
+## Pothole Detection Recording
+
+### Automatic Recording
+
+Every time a pothole is detected, the backend automatically saves it with location, time, and confidence to the database.
+
+### What Gets Recorded
+
+When a pothole is detected:
+- **Location**: Latitude/Longitude (from phone GPS at detection time)
+- **Time**: Exact timestamp of detection
+- **Date**: Included in ISO 8601 timestamp format
+- **Confidence**: Detection confidence score (0-1)
+- **Speed**: Vehicle velocity at detection
+- **Mode**: REVERSE or DRIVING
+- **Count**: Number of potholes detected in frame
+
+### Database Storage
+
+Potholes are automatically saved to SQLite database table `pothole_detections` with these fields:
+
+- `id`: Unique detection ID
+- `latitude`: Phone GPS latitude at detection
+- `longitude`: Phone GPS longitude at detection
+- `confidence`: Detection confidence (0-1)
+- `velocity_kmh`: Vehicle speed
+- `mode`: REVERSE or DRIVING
+- `detected_at`: Timestamp of detection (ISO 8601)
+- `pothole_count`: Number of potholes in frame
+
+### Accessing Recorded Potholes
+
+Query the database directly:
+
+\\\ash
+# Query recent detections
+sqlite3 potholenet.db \SELECT latitude, longitude, confidence, detected_at FROM pothole_detections ORDER BY detected_at DESC LIMIT 10;\`n
+# Find potholes in a region (latitude 3.1-3.2, longitude 101.5-101.6)
+sqlite3 potholenet.db \SELECT id, latitude, longitude, confidence FROM pothole_detections WHERE latitude BETWEEN 3.1 AND 3.2 AND longitude BETWEEN 101.5 AND 101.6;\`n
+# Count potholes by day
+sqlite3 potholenet.db \SELECT DATE(detected_at), COUNT(*) FROM pothole_detections GROUP BY DATE(detected_at);\`n\\\`n
+### Requirements for Recording
+
+For full pothole recording with location:
+1. Phone sends GPS coordinates via `POST /location/update` (latitude, longitude, velocity)
+2. Pothole detected in DRIVING mode (Roboflow model active)
+3. Backend has SQLite database (auto-created on startup)
+
+If phone doesn't send coordinates, location will be NULL but detection is still recorded.

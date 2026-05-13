@@ -27,12 +27,12 @@ The firmware now uses **Access Point (AP) Mode**. The device creates its own WiF
 ✅ **Dual-Mode Detection System**
 - **REVERSE Mode**: Fast YOLO-only detection (<100ms) for backing up
 - **DRIVING Mode**: Full detection with pothole + object recognition (<500ms)
-- **Auto-Detection**: Switches automatically based on GPS velocity
+- **Auto-Detection**: Switches automatically based on phone GPS velocity
 
 ✅ **Complete Solution**
 - Enhanced FastAPI backend with `/detect/dual-mode` endpoint
 - MicroPython firmware for ESP32-CAM with built-in USB
-- GPS integration with automatic mode switching
+- **Phone GPS integration** - No hardware GPS module needed!
 - Production-ready with error handling and logging
 
 ✅ **Real-Time Performance**
@@ -40,6 +40,12 @@ The firmware now uses **Access Point (AP) Mode**. The device creates its own WiF
 - Pothole detection on forward motion
 - Vehicle/human/animal detection in all modes
 - Memory efficient (works on 4MB ESP32-CAM)
+
+✅ **Phone Integration**
+- Phone app sends GPS speed via `POST /location/update`
+- Backend stores latest velocity
+- ESP32 sends frames → backend auto-detects mode
+- Works over WiFi, no extra hardware
 
 ---
 
@@ -59,11 +65,13 @@ cd c:\Users\Teoh Jun Hong\Documents\potholenet\potholenet-backend
 # Start your backend (if not already running)
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# Test with curl
+# Test phone location update
+curl -X POST http://localhost:8000/location/update \
+  -F "velocity_kmh=45.5"
+
+# Test detection with image (backend uses phone's speed for mode)
 curl -X POST \
   -F "image=@test_image.jpg" \
-  -F "mode=driving" \
-  -F "velocity_kmh=50.0" \
   http://localhost:8000/detect/dual-mode
 ```
 

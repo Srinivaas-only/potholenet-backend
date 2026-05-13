@@ -14,7 +14,7 @@ import network
 import socket
 import sys
 import time
-from machine import UART, Pin
+from machine import Pin
 
 # ============================================================================
 # CONFIGURATION (Update these for your setup)
@@ -52,15 +52,8 @@ CAMERA_PINS = {
     'pclk': 25,
 }
 
-# GPS Configuration (UART 2)
-GPS_UART_NUM = 2
-GPS_BAUD = 9600
-GPS_RX = 16  # GPIO 16 (RX2)
-GPS_TX = 17  # GPIO 17 (TX2)
-
 # Detection Settings
 FRAME_INTERVAL = 1.0  # Seconds between frames (1 frame/sec)
-LOCATION_INTERVAL = 5.0  # Seconds between GPS updates
 LOW_LATENCY_MODE = True  # Enable reverse mode optimization
 
 # Status LED
@@ -113,88 +106,7 @@ class StatusLED:
 
 led = StatusLED(STATUS_LED_PIN)
 
-# ============================================================================
-# GPS PARSER
-# ============================================================================
 
-class GPSParser:
-    """Parse NMEA GPS data from serial UART"""
-    
-    def __init__(self, uart_num=2, rx_pin=16, tx_pin=17, baud=9600):
-        self.uart = UART(uart_num, baud, rx=rx_pin, tx=tx_pin, timeout=100)
-        self.latitude = 0.0
-        self.longitude = 0.0
-        self.velocity_kmh = 0.0
-        self.satellites = 0
-        self.fix_type = 0
-    
-    def read_sentence(self):
-        """Read and parse NMEA sentence"""
-        try:
-            if self.uart.any():
-                line = self.uart.readline()
-                if line:
-                    self._parse_nmea(line.decode('utf-8', errors='ignore').strip())
-        except Exception as e:
-            log("ERROR", f"GPS read error: {e}")
-    
-    def _parse_nmea(self, sentence):
-        """Parse NMEA sentence"""
-        try:
-            if sentence.startswith('$GPRMC'):
-                # RMC: Recommended Minimum Navigation Info
-                parts = sentence.split(',')
-                if len(parts) > 7 and parts[2] == 'A':  # A = Active
-                    # Parse latitude
-                    if len(parts) > 3:
-                        lat_str = parts[3]
-                        if lat_str:
-                            self.latitude = self._dms_to_decimal(lat_str)
-                    # Parse longitude
-                    if len(parts) > 5:
-                        lon_str = parts[5]
-                        if lon_str:
-                            self.longitude = self._dms_to_decimal(lon_str)
-                    # Parse velocity (knots to km/h)
-                    if len(parts) > 7:
-                        try:
-                            velocity_knots = float(parts[7])
-                            self.velocity_kmh = velocity_knots * 1.852
-                        except:
-                            pass
-            
-            elif sentence.startswith('$GPGGA'):
-                # GGA: Fix and satellites
-                parts = sentence.split(',')
-                if len(parts) > 7:
-                    try:
-                        self.satellites = int(parts[7])
-                        self.fix_type = int(parts[6])
-                    except:
-                        pass
-        except Exception as e:
-            log("DEBUG", f"NMEA parse error: {e}")
-    
-    @staticmethod
-    def _dms_to_decimal(dms_str):
-        """Convert DMS string to decimal degrees"""
-        try:
-            degrees = float(dms_str[:2])
-            minutes = float(dms_str[2:])
-            decimal = degrees + (minutes / 60.0)
-            return decimal
-        except:
-            return 0.0
-    
-    def get_status(self):
-        """Return GPS status dict"""
-        return {
-            'latitude': self.latitude,
-            'longitude': self.longitude,
-            'velocity_kmh': self.velocity_kmh,
-            'satellites': self.satellites,
-            'fix_type': self.fix_type,
-        }
 
 # ============================================================================
 # CAMERA CONTROL
@@ -314,9 +226,13 @@ class HTTPClient:
         self.port = port
         self.timeout = 5
     
-    def post_detection(self, jpeg_bytes, mode="driving", velocity_kmh=None):
+    def post_detection(self, jpeg_bytes, mode="driving"):
         """
         POST image to dual-mode detection endpoint
+        
+        Mode and velocity_kmh are determined by backend using phone GPS:
+        - POST /location/update sends phone GPS speed
+        - /detect/dual-mode uses latest phone speed to auto-detect mode
         
         Returns: dict with detection results or None on error
         """
@@ -329,12 +245,6 @@ class HTTPClient:
             body.extend(b'--' + boundary + b'\r\n')
             body.extend(b'Content-Disposition: form-data; name="mode"\r\n\r\n')
             body.extend(mode.encode() + b'\r\n')
-            
-            # Add velocity parameter (optional)
-            if velocity_kmh is not None:
-                body.extend(b'--' + boundary + b'\r\n')
-                body.extend(b'Content-Disposition: form-data; name="velocity_kmh"\r\n\r\n')
-                body.extend(str(velocity_kmh).encode() + b'\r\n')
             
             # Add image file
             body.extend(b'--' + boundary + b'\r\n')
@@ -402,9 +312,7 @@ class DashcamApp:
     def __init__(self):
         self.wifi_mgr = WiFiManager(AP_SSID, AP_PASSWORD)
         self.http_client = HTTPClient(BACKEND_HOST, BACKEND_PORT)
-        self.gps = GPSParser(GPS_UART_NUM, GPS_RX, GPS_TX, GPS_BAUD)
         self.last_frame_time = 0
-        self.last_gps_time = 0
     
     def run(self):
         """Main application loop"""
@@ -436,11 +344,6 @@ class DashcamApp:
             while True:
                 current_time = time.time()
                 
-                # Update GPS data periodically
-                if (current_time - self.last_gps_time) > LOCATION_INTERVAL:
-                    self.gps.read_sentence()
-                    self.last_gps_time = current_time
-                
                 # Capture and send frame
                 if (current_time - self.last_frame_time) > FRAME_INTERVAL:
                     log("DEBUG", f"Capturing frame {frame_count + 1}...")
@@ -448,24 +351,14 @@ class DashcamApp:
                     jpeg_data = camera_ctrl.capture_jpeg()
                     if jpeg_data:
                         frame_size = len(jpeg_data)
-                        gps_status = self.gps.get_status()
-                        velocity = gps_status['velocity_kmh']
-                        
-                        # Determine mode based on velocity
-                        mode = "reverse" if velocity < 0 else "driving"
                         
                         log("INFO", 
                             f"Sending frame {frame_count + 1} "
-                            f"({frame_size} bytes, "
-                            f"mode={mode}, "
-                            f"velocity={velocity:.1f} km/h)")
+                            f"({frame_size} bytes)")
                         
-                        # Send to backend
-                        result = self.http_client.post_detection(
-                            jpeg_data,
-                            mode=mode,
-                            velocity_kmh=velocity if velocity != 0 else None
-                        )
+                        # Backend uses phone GPS speed for mode detection
+                        # Phone sends speed via POST /location/update
+                        result = self.http_client.post_detection(jpeg_data)
                         
                         if result:
                             alert = result.get('alert', 'N/A')
