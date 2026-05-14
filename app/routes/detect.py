@@ -78,28 +78,20 @@ async def detect_objects(image: UploadFile = File(...)):
 )
 async def detect_dual_mode(
     image: UploadFile = File(...),
-    mode: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     """
-    Dual-mode detection endpoint optimized for reverse and driving scenarios.
-    
-    **REVERSE Mode** (Low latency <100ms):
+    Dual-mode detection endpoint. Mode is determined purely by phone GPS speed.
+
+    **REVERSE Mode** (velocity_kmh <= 10, low latency <100ms):
     - YOLOv8 only: detects humans, vehicles, animals
-    - Skips pothole detection for speed
-    - Useful for backing up or maneuvering
-    
-    **DRIVING Mode** (Balanced <500ms):
+    - Skips pothole detection — used for parking, maneuvering, slow rolling
+
+    **DRIVING Mode** (velocity_kmh > 10, balanced <500ms):
     - Roboflow pothole detection + YOLOv8 object detection
-    - Full accuracy for hazard detection
-    - Auto-detects reverse if velocity < 0 km/h
-    
-    Mode Detection:
-    - If mode="reverse" explicitly: use REVERSE
-    - If mode="driving" explicitly: use DRIVING
-    - If mode=None: auto-detect from phone GPS speed
-      - velocity_kmh < 0: REVERSE
-      - velocity_kmh >= 0: DRIVING
+    - Full accuracy for hazard detection at road speeds
+
+    Fallback: if no GPS speed has been pushed via /location/update, defaults to DRIVING.
     """
     # Validate file type
     if image.content_type and image.content_type not in (
@@ -120,17 +112,16 @@ async def detect_dual_mode(
         if len(image_bytes) == 0:
             raise HTTPException(status_code=400, detail="Empty image file received.")
 
-        # Get phone GPS speed
+        # Pick mode from phone GPS speed: <=10 km/h is REVERSE, faster is DRIVING.
         velocity_kmh = app_main.gps_state.get("velocity_kmh")
-        
-        # Auto-detect mode from phone GPS speed if not explicitly provided
-        if mode is None:
-            if velocity_kmh is not None:
-                mode = "reverse" if velocity_kmh < 0 else "driving"
-                logger.info(f"Auto-detected mode={mode} from phone GPS speed={velocity_kmh} km/h")
-            else:
-                mode = "driving"
-                logger.warning("No phone GPS speed available, defaulting to DRIVING mode")
+        if velocity_kmh is None:
+            mode = "driving"
+            logger.warning("No phone GPS speed available, defaulting to DRIVING mode")
+        elif velocity_kmh <= 10:
+            mode = "reverse"
+        else:
+            mode = "driving"
+        logger.info(f"Mode={mode} (velocity_kmh={velocity_kmh})")
 
         result = detector.run_detection_dual_mode(
             image_bytes, mode=mode, velocity_kmh=velocity_kmh

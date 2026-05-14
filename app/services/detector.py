@@ -215,16 +215,11 @@ class Detector:
         Args:
             image_bytes: Raw image data
             mode: "reverse" or "driving"
-            velocity_kmh: Optional vehicle velocity to auto-detect reverse (if negative)
+            velocity_kmh: Optional vehicle velocity, echoed back in the response
         
         Returns:
             Detection result optimized for the mode
         """
-        # Auto-detect reverse based on velocity if provided
-        if velocity_kmh is not None and velocity_kmh < 0:
-            mode = "reverse"
-            logger.info(f"Auto-detected REVERSE mode (velocity: {velocity_kmh} km/h)")
-        
         logger.info(f"Running {mode.upper()} detection")
         
         # Decode image
