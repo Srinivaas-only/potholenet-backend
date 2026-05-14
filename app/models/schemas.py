@@ -125,14 +125,40 @@ class HealthResponse(BaseModel):
 # ---------- Location Schemas ----------
 
 class LocationResponse(BaseModel):
-    ip: str
+    ip: Optional[str] = None
     latitude: float
     longitude: float
     city: Optional[str] = None
     region: Optional[str] = None
     country: Optional[str] = None
     accuracy_km: float = 50.0
-    source: str = "ip_geolocation"
+    source: str = "ip_geolocation"  # "ip_geolocation" or "phone_gps"
+
+
+class GPSUpdateRequest(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    accuracy_m: Optional[float] = Field(None, ge=0, description="GPS accuracy in meters")
+    speed_kmh: Optional[float] = Field(None, ge=0, description="Speed in km/h")
+    bearing: Optional[float] = Field(None, ge=0, lt=360, description="Direction in degrees")
+    altitude: Optional[float] = Field(None, description="Altitude in meters")
+
+
+class GPSUpdateResponse(BaseModel):
+    status: str = "ok"
+    accuracy_m: Optional[float] = None
+    source: str = "phone_gps"
+
+
+class ReverseGeocodeResponse(BaseModel):
+    latitude: float
+    longitude: float
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    postal_code: Optional[str] = None
+    road: Optional[str] = None
 
 
 # ---------- Error Schema ----------

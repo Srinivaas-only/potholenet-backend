@@ -26,6 +26,7 @@ gps_state: Dict[str, Optional[float]] = {
     "velocity_kmh": None,  # Latest speed from phone GPS
     "latitude": None,      # Latest latitude from phone GPS
     "longitude": None,     # Latest longitude from phone GPS
+    "accuracy_m": None,    # GPS accuracy in meters
     "last_update": None,   # Timestamp of last update
 }
 

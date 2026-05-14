@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 import time
 
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Query, Depends
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
 from sqlalchemy.orm import Session
 
 from app.models.schemas import DetectionResponse, DetectionCategory, ErrorResponse, DualModeDetectionResponse
@@ -156,61 +156,6 @@ async def detect_dual_mode(
         )
 
 
-@router.post("/location/update", tags=["gps"])
-async def update_phone_location(velocity_kmh: float = Form(...), latitude: Optional[float] = Form(None), longitude: Optional[float] = Form(None)):
-    """
-    Phone app sends current velocity and GPS location to update detection mode.
-    
-    Called by phone GPS module:
-    - velocity_kmh > 0: Forward (DRIVING mode)
-    - velocity_kmh < 0: Reverse (REVERSE mode)  
-    - velocity_kmh = 0: Stopped (defaults to DRIVING)
-    - latitude: Phone GPS latitude (-90 to 90)
-    - longitude: Phone GPS longitude (-180 to 180)
-    
-    Location is used to record where potholes are detected.
-    
-    Example (phone app sends this every GPS update):
-    ```
-    POST /location/update
-    Form Data: velocity_kmh=45.5, latitude=3.1234, longitude=101.5678
-    ```
-    """
-    app_main.gps_state["velocity_kmh"] = velocity_kmh
-    app_main.gps_state["latitude"] = latitude
-    app_main.gps_state["longitude"] = longitude
-    app_main.gps_state["last_update"] = time.time()
-    
-    logger.info(f"Phone GPS updated: {velocity_kmh} km/h at ({latitude}, {longitude})")
-    
-    return {
-        "status": "ok",
-        "velocity_kmh": velocity_kmh,
-        "latitude": latitude,
-        "longitude": longitude,
-        "timestamp": app_main.gps_state["last_update"]
-    }
-
-
-@router.get("/location/current-speed", tags=["gps"])
-async def get_current_speed():
-    """
-    Get the latest phone GPS speed and location.
-    
-    Returns:
-    - velocity_kmh: Latest speed (None if not updated yet)
-    - latitude: Latest latitude (None if not available)
-    - longitude: Latest longitude (None if not available)
-    - last_update: Timestamp of last update
-    
-    Used by ESP32-CAM or other clients to check current speed and location.
-    """
-    return {
-        "velocity_kmh": app_main.gps_state.get("velocity_kmh"),
-        "latitude": app_main.gps_state.get("latitude"),
-        "longitude": app_main.gps_state.get("longitude"),
-        "last_update": app_main.gps_state.get("last_update"),
-    }
 
 
 def save_pothole_detection(db: Session, detection_result: dict, velocity_kmh: Optional[float]):
