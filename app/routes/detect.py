@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 import time
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.models.schemas import DetectionResponse, DetectionCategory, ErrorResponse, DualModeDetectionResponse
@@ -14,6 +14,10 @@ from app.models.db_models import PotholeDetection
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["detection"])
+
+# Dual-mode thresholds
+GPS_STALE_SECONDS = 60        # GPS data older than this → stale, ignored
+REVERSE_SPEED_THRESHOLD = 10  # km/h — at or below this speed = REVERSE mode
 
 
 @router.post(
@@ -78,23 +82,27 @@ async def detect_objects(image: UploadFile = File(...)):
 )
 async def detect_dual_mode(
     image: UploadFile = File(...),
+    velocity_kmh: Optional[float] = Query(
+        None,
+        ge=0,
+        description="Vehicle speed in km/h. <=10 = REVERSE, >10 = DRIVING. Overrides GPS state.",
+    ),
     db: Session = Depends(get_db),
 ):
     """
-    Dual-mode detection endpoint. Mode is determined purely by phone GPS speed.
+    Dual-mode detection endpoint. Mode is determined by speed with a priority chain:
 
-    **REVERSE Mode** (velocity_kmh <= 10):
+    **Priority 1 — Explicit query param** `?velocity_kmh=X`
+    **Priority 2 — GPS state** from `POST /location/update` (if fresh < 60s)
+    **Priority 3 — Default** to REVERSE (safer: assumes stationary)
+
+    **REVERSE Mode** (speed ≤ 10 km/h):
     - YOLOv8 runs to detect humans / vehicles / animals behind the car
-    - Pothole detection skipped (irrelevant at parking speed)
-    - The raw rear-view video stream itself is separately served ESP32 -> phone
-      over the AP, so the display still works when phone has no mobile data;
-      these YOLO alerts only fire when the phone has internet to reach this backend.
+    - Pothole detection SKIPPED (irrelevant at parking speed)
 
-    **DRIVING Mode** (velocity_kmh > 10):
+    **DRIVING Mode** (speed > 10 km/h):
     - Roboflow pothole detection + YOLOv8 object detection
     - Full hazard detection at road speeds
-
-    Fallback: if no GPS speed has been pushed via /location/update, defaults to DRIVING.
     """
     # Validate file type
     if image.content_type and image.content_type not in (
@@ -115,24 +123,46 @@ async def detect_dual_mode(
         if len(image_bytes) == 0:
             raise HTTPException(status_code=400, detail="Empty image file received.")
 
-        # Push the raw frame to the stream cache the moment it arrives, so /stream
-        # sees the frame ~hundreds of ms before detection finishes annotating it.
+        # Push the raw frame to the stream cache
         app_main.frame_state["jpeg"] = image_bytes
         app_main.frame_state["timestamp"] = time.time()
 
-        # Pick mode from phone GPS speed: <=10 km/h is REVERSE, faster is DRIVING.
-        velocity_kmh = app_main.gps_state.get("velocity_kmh")
-        if velocity_kmh is None:
-            mode = "driving"
-            logger.warning("No phone GPS speed available, defaulting to DRIVING mode")
-        elif velocity_kmh <= 10:
+        # ---- MODE SELECTION (priority chain) ----
+        resolved_velocity = None
+        speed_source = "none"
+
+        # Priority 1: Explicit query parameter
+        if velocity_kmh is not None:
+            resolved_velocity = velocity_kmh
+            speed_source = "query_param"
+        else:
+            # Priority 2: GPS state (if fresh)
+            gps = app_main.gps_state
+            gps_velocity = gps.get("velocity_kmh")
+            gps_age = None
+            if gps.get("last_update") is not None:
+                gps_age = time.time() - gps["last_update"]
+
+            if gps_velocity is not None and gps_age is not None and gps_age <= GPS_STALE_SECONDS:
+                resolved_velocity = gps_velocity
+                speed_source = f"gps_state (age={gps_age:.1f}s)"
+            else:
+                # Priority 3: Default to REVERSE (safer)
+                resolved_velocity = 0.0
+                speed_source = "default"
+
+        # Determine mode based on resolved speed
+        if resolved_velocity <= REVERSE_SPEED_THRESHOLD:
             mode = "reverse"
         else:
             mode = "driving"
-        logger.info(f"Mode={mode} (velocity_kmh={velocity_kmh})")
+
+        logger.info(
+            f"Mode={mode.upper()} | velocity={resolved_velocity} km/h | source={speed_source}"
+        )
 
         result = detector.run_detection_dual_mode(
-            image_bytes, mode=mode, velocity_kmh=velocity_kmh
+            image_bytes, mode=mode, velocity_kmh=resolved_velocity
         )
 
         # Cache an annotated copy of the frame for /stream and /latest-frame.jpg.
@@ -141,7 +171,7 @@ async def detect_dual_mode(
 
         # Save pothole detection to database if potholes detected
         if result.get("pothole", {}).get("detected"):
-            save_pothole_detection(db, result, velocity_kmh)
+            save_pothole_detection(db, result, resolved_velocity)
 
         return DualModeDetectionResponse(**result)
 
