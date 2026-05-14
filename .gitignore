@@ -16,6 +16,9 @@ __pycache__/
 .venv/
 venv/
 
+# ESP32 firmware secrets (WiFi credentials, backend URL)
+esp32_cam_firmware/secrets.h
+
 # Test files
 test_image.jpg
 
