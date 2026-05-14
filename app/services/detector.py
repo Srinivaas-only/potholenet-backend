@@ -185,7 +185,12 @@ class Detector:
                         continue
 
                     label = TARGET_CLASSES[class_id]
-                    detail = {"label": label, "confidence": round(confidence, 4)}
+                    x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
+                    detail = {
+                        "label": label,
+                        "confidence": round(confidence, 4),
+                        "box": [x1, y1, x2, y2],
+                    }
 
                     if class_id in HUMAN_CLASSES:
                         humans["details"].append(detail)
@@ -261,6 +266,62 @@ class Detector:
             "alert": alert_str,
             "velocity_kmh": velocity_kmh,
         }
+
+
+# Colors for annotation overlay (BGR for OpenCV).
+_OVERLAY_COLORS = {
+    "pothole":  (0, 0, 255),     # red
+    "humans":   (0, 255, 0),     # green
+    "vehicles": (255, 200, 0),   # cyan-ish
+    "animals":  (255, 0, 255),   # magenta
+}
+
+
+def _draw_box(img, x1, y1, x2, y2, label, color):
+    cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+    cv2.rectangle(img, (x1, max(0, y1 - th - 6)), (x1 + tw + 4, y1), color, -1)
+    cv2.putText(img, label, (x1 + 2, max(th, y1) - 4),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+
+
+def annotate_detections(image_bytes: bytes, result: dict) -> bytes:
+    """Draw bounding boxes from a detection result onto the image, return JPEG bytes.
+
+    Falls back to the original bytes if decode/encode fails.
+    """
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return image_bytes
+
+    for p in result.get("pothole", {}).get("details", []):
+        cx, cy = p.get("x", 0), p.get("y", 0)
+        w, h = p.get("width", 0), p.get("height", 0)
+        x1, y1 = int(cx - w / 2), int(cy - h / 2)
+        x2, y2 = int(cx + w / 2), int(cy + h / 2)
+        _draw_box(img, x1, y1, x2, y2,
+                  f"pothole {p.get('confidence', 0):.2f}",
+                  _OVERLAY_COLORS["pothole"])
+
+    for cat in ("humans", "vehicles", "animals"):
+        color = _OVERLAY_COLORS[cat]
+        for d in result.get(cat, {}).get("details", []):
+            box = d.get("box")
+            if not box:
+                continue
+            x1, y1, x2, y2 = box
+            _draw_box(img, x1, y1, x2, y2,
+                      f"{d.get('label', cat)} {d.get('confidence', 0):.2f}",
+                      color)
+
+    mode = result.get("mode")
+    if mode:
+        cv2.putText(img, mode, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+                    (255, 255, 255), 2, cv2.LINE_AA)
+
+    ok, buf = cv2.imencode(".jpg", img)
+    return buf.tobytes() if ok else image_bytes
 
 
 # Module-level singleton

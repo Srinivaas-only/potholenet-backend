@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Query, Dep
 from sqlalchemy.orm import Session
 
 from app.models.schemas import DetectionResponse, DetectionCategory, ErrorResponse, DualModeDetectionResponse
-from app.services.detector import get_detector
+from app.services.detector import annotate_detections, get_detector
 from app import main as app_main
 from app.database import get_db
 from app.models.db_models import PotholeDetection
@@ -115,7 +115,8 @@ async def detect_dual_mode(
         if len(image_bytes) == 0:
             raise HTTPException(status_code=400, detail="Empty image file received.")
 
-        # Cache the most recent frame so /stream and /latest-frame.jpg can serve it.
+        # Push the raw frame to the stream cache the moment it arrives, so /stream
+        # sees the frame ~hundreds of ms before detection finishes annotating it.
         app_main.frame_state["jpeg"] = image_bytes
         app_main.frame_state["timestamp"] = time.time()
 
@@ -133,11 +134,15 @@ async def detect_dual_mode(
         result = detector.run_detection_dual_mode(
             image_bytes, mode=mode, velocity_kmh=velocity_kmh
         )
-        
+
+        # Cache an annotated copy of the frame for /stream and /latest-frame.jpg.
+        app_main.frame_state["jpeg"] = annotate_detections(image_bytes, result)
+        app_main.frame_state["timestamp"] = time.time()
+
         # Save pothole detection to database if potholes detected
         if result.get("pothole", {}).get("detected"):
             save_pothole_detection(db, result, velocity_kmh)
-        
+
         return DualModeDetectionResponse(**result)
 
     except ValueError as e:
