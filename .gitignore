@@ -12,6 +12,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Virtual environment
+.venv/
+venv/
+
 # Test files
 test_image.jpg
 
