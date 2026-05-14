@@ -83,13 +83,16 @@ async def detect_dual_mode(
     """
     Dual-mode detection endpoint. Mode is determined purely by phone GPS speed.
 
-    **REVERSE Mode** (velocity_kmh <= 10, low latency <100ms):
-    - YOLOv8 only: detects humans, vehicles, animals
-    - Skips pothole detection — used for parking, maneuvering, slow rolling
+    **REVERSE Mode** (velocity_kmh <= 10):
+    - YOLOv8 runs to detect humans / vehicles / animals behind the car
+    - Pothole detection skipped (irrelevant at parking speed)
+    - The raw rear-view video stream itself is separately served ESP32 -> phone
+      over the AP, so the display still works when phone has no mobile data;
+      these YOLO alerts only fire when the phone has internet to reach this backend.
 
-    **DRIVING Mode** (velocity_kmh > 10, balanced <500ms):
+    **DRIVING Mode** (velocity_kmh > 10):
     - Roboflow pothole detection + YOLOv8 object detection
-    - Full accuracy for hazard detection at road speeds
+    - Full hazard detection at road speeds
 
     Fallback: if no GPS speed has been pushed via /location/update, defaults to DRIVING.
     """
@@ -111,6 +114,10 @@ async def detect_dual_mode(
 
         if len(image_bytes) == 0:
             raise HTTPException(status_code=400, detail="Empty image file received.")
+
+        # Cache the most recent frame so /stream and /latest-frame.jpg can serve it.
+        app_main.frame_state["jpeg"] = image_bytes
+        app_main.frame_state["timestamp"] = time.time()
 
         # Pick mode from phone GPS speed: <=10 km/h is REVERSE, faster is DRIVING.
         velocity_kmh = app_main.gps_state.get("velocity_kmh")

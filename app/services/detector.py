@@ -210,45 +210,29 @@ class Detector:
         self, image_bytes: bytes, mode: str = "driving", velocity_kmh: Optional[float] = None
     ) -> dict:
         """
-        Run detection in dual-mode (reverse vs driving).
-        
-        Args:
-            image_bytes: Raw image data
-            mode: "reverse" or "driving"
-            velocity_kmh: Optional vehicle velocity, echoed back in the response
-        
-        Returns:
-            Detection result optimized for the mode
+        Run detection in dual-mode.
+
+        REVERSE: YOLO only — detect humans/vehicles/animals behind the car for
+        backup safety alerts; pothole detection skipped (irrelevant at parking speed).
+        DRIVING: full Roboflow pothole detection + YOLO.
         """
         logger.info(f"Running {mode.upper()} detection")
-        
-        # Decode image
+
         img = self.decode_image(image_bytes)
         if img is None:
             raise ValueError("Could not decode image. Ensure it is a valid JPEG/PNG.")
 
-        # Save to temp file for model inference
         temp_fd, temp_path = tempfile.mkstemp(suffix=".jpg")
         try:
             cv2.imwrite(temp_path, img)
-
+            yolo_results = self._run_yolo_detection(temp_path)
             if mode.lower() == "reverse":
-                # REVERSE MODE: Fast YOLO-only detection (<100ms)
-                logger.debug("REVERSE mode: Running YOLO only (lightweight)")
-                yolo_results = self._run_yolo_detection(temp_path)
-                
-                # Skip pothole detection in reverse
                 pothole_results = {"detected": False, "count": 0, "details": []}
-                
-            else:  # driving mode
-                # DRIVING MODE: Full detection with Roboflow + YOLO (<500ms)
-                logger.debug("DRIVING mode: Running Roboflow + YOLO (full accuracy)")
+            else:
                 settings = get_settings()
                 pothole_results = self._run_pothole_detection(
                     temp_path, settings.POTHOLE_CONFIDENCE_THRESHOLD
                 )
-                yolo_results = self._run_yolo_detection(temp_path)
-
         finally:
             # Clean up temp file
             os.close(temp_fd)

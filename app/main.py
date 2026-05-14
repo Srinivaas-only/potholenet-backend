@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 import time
 
 from fastapi import FastAPI
@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import create_tables
-from app.routes import detect, reports, health, location
+from app.routes import detect, reports, health, location, stream
 from app.services.detector import get_detector
 
 # Configure logging
@@ -28,6 +28,9 @@ gps_state: Dict[str, Optional[float]] = {
     "longitude": None,     # Latest longitude from phone GPS
     "last_update": None,   # Timestamp of last update
 }
+
+# Last frame received from ESP32, exposed via /latest-frame.jpg and /stream.
+frame_state: Dict[str, Optional[Any]] = {"jpeg": None, "timestamp": None}
 
 app = FastAPI(
     title="PotholeNet API",
@@ -72,6 +75,7 @@ app.include_router(detect.router)
 app.include_router(reports.router)
 app.include_router(health.router)
 app.include_router(location.router)
+app.include_router(stream.router)
 
 
 @app.get("/", tags=["root"])
