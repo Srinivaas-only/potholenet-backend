@@ -31,7 +31,11 @@ gps_state: Dict[str, Optional[float]] = {
 }
 
 # Last frame received from ESP32, exposed via /latest-frame.jpg and /stream.
-frame_state: Dict[str, Optional[Any]] = {"jpeg": None, "timestamp": None}
+frame_state: Dict[str, Optional[Any]] = {
+    "jpeg": None,        # raw frame from ESP32 — low-latency live view
+    "annotated": None,   # annotated frame after detection — lags by inference time
+    "timestamp": None,
+}
 
 app = FastAPI(
     title="PotholeNet API",
