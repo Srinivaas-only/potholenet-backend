@@ -10,7 +10,7 @@
 // Copy secrets.h.example to secrets.h and fill in your values before flashing.
 #include "secrets.h"
 
-static const uint32_t FRAME_INTERVAL_MS = 1000;
+static const uint32_t FRAME_INTERVAL_MS = 200;
 
 // AI Thinker ESP32-CAM pin map (OV2640).
 #define PWDN_GPIO_NUM   32
@@ -50,7 +50,7 @@ static void initCamera() {
   c.pin_reset = RESET_GPIO_NUM;
   c.xclk_freq_hz = 20000000;
   c.pixel_format = PIXFORMAT_JPEG;
-  c.frame_size   = FRAMESIZE_VGA;   // 640x480
+  c.frame_size   = FRAMESIZE_QVGA;  // 320x240
   c.jpeg_quality = 12;              // 0=best, 63=worst
   c.fb_count     = 2;
   c.grab_mode    = CAMERA_GRAB_LATEST;

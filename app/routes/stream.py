@@ -40,20 +40,12 @@ img.onerror = () => { meta.textContent = 'stream connection failed — retrying'
 """
 
 
-@router.get("/stream", response_class=HTMLResponse, summary="Live camera preview page")
-async def stream_page():
-    return _PAGE
-
-
-@router.get("/stream.mjpg", summary="MJPEG push stream of the latest frame")
-async def mjpeg_stream():
-    """multipart/x-mixed-replace — browser renders frames as they arrive."""
-
+def _mjpeg_response(state_key: str) -> StreamingResponse:
     async def gen():
         last_id = None
         try:
             while True:
-                jpeg = app_main.frame_state.get("jpeg")
+                jpeg = app_main.frame_state.get(state_key)
                 if jpeg is not None and id(jpeg) != last_id:
                     last_id = id(jpeg)
                     yield (
@@ -71,6 +63,28 @@ async def mjpeg_stream():
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
+
+
+@router.get("/stream", response_class=HTMLResponse, summary="Live camera preview page (raw, low-latency)")
+async def stream_page():
+    return _PAGE
+
+
+@router.get("/stream.mjpg", summary="MJPEG push stream of the raw frame (low-latency)")
+async def mjpeg_stream():
+    """multipart/x-mixed-replace — browser renders raw frames as they arrive."""
+    return _mjpeg_response("jpeg")
+
+
+@router.get("/stream-annotated", response_class=HTMLResponse, summary="Live camera preview with detection overlays")
+async def stream_annotated_page():
+    return _PAGE.replace("/stream.mjpg", "/stream-annotated.mjpg")
+
+
+@router.get("/stream-annotated.mjpg", summary="MJPEG push stream with detection overlays")
+async def mjpeg_stream_annotated():
+    """Annotated stream — lags behind raw by the inference time."""
+    return _mjpeg_response("annotated")
 
 
 @router.get("/latest-frame.jpg", summary="Most recent JPEG received from the ESP32")

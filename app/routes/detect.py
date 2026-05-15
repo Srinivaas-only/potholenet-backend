@@ -165,8 +165,9 @@ async def detect_dual_mode(
             image_bytes, mode=mode, velocity_kmh=resolved_velocity
         )
 
-        # Cache an annotated copy of the frame for /stream and /latest-frame.jpg.
-        app_main.frame_state["jpeg"] = annotate_detections(image_bytes, result)
+        # Keep raw frame in "jpeg" (served by /stream) for low-latency live view.
+        # Store annotated copy separately for /stream-annotated.
+        app_main.frame_state["annotated"] = annotate_detections(image_bytes, result)
         app_main.frame_state["timestamp"] = time.time()
 
         # Save pothole detection to database if potholes detected

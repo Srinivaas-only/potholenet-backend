@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import create_tables
-from app.routes import detect, reports, health, location, stream, dashboard
+from app.routes import detect, reports, health, location, stream, dashboard, phone
 from app.services.detector import get_detector
 
 # Configure logging
@@ -31,7 +31,11 @@ gps_state: Dict[str, Optional[float]] = {
 }
 
 # Last frame received from ESP32, exposed via /latest-frame.jpg and /stream.
-frame_state: Dict[str, Optional[Any]] = {"jpeg": None, "timestamp": None}
+frame_state: Dict[str, Optional[Any]] = {
+    "jpeg": None,        # raw frame from ESP32 — low-latency live view
+    "annotated": None,   # annotated frame after detection — lags by inference time
+    "timestamp": None,
+}
 
 app = FastAPI(
     title="PotholeNet API",
@@ -78,6 +82,7 @@ app.include_router(health.router)
 app.include_router(location.router)
 app.include_router(stream.router)
 app.include_router(dashboard.router)
+app.include_router(phone.router)
 
 
 @app.get("/", tags=["root"])
@@ -87,6 +92,7 @@ async def root():
         "message": "PotholeNet API is running",
         "docs": "/docs",
         "dashboard": "/dashboard",
+        "app": "/app",
         "health": "/health",
     }
 
