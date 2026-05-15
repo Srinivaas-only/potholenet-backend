@@ -34,7 +34,7 @@
  *      release once upload begins
  *
  * AFTER FLASHING:
- *   - ESP32 creates Wi-Fi: SSID "PotholeNet-AP", password "potholenet"
+ *   - ESP32 creates its own Wi-Fi hotspot (configurable SSID in secrets.h)
  *   - Connect your phone to this Wi-Fi network
  *   - A captive portal page should auto-appear, or browse to 192.168.4.1
  *   - Open the PotholeNet app — it auto-detects the ESP32 stream
@@ -50,11 +50,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include "esp_http_server.h"
-#include "secrets.h"       // SSID & password — edit secrets.h.example
-
-// If you don't have secrets.h, uncomment these and comment out the #include above:
-// #define AP_SSID     "PotholeNet-AP"
-// #define AP_PASSWORD "potholenet"
+#include "secrets.h"       // SSID & password — copy secrets.h.example to secrets.h and edit
 
 // =========================
 // CONFIGURATION
