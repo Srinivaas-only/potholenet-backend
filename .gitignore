@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+__pycache__/
+
+# Build output
+dist/
+build/
+
+# Environment / secrets
+.env
+*.env.local
+
+# Database
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# ML model weights (large files)
+*.pt
+*.onnx
+*.h5
+
+# Logs
+*.log
+
+# Test uploads
+potholenet-backend/test.jpg
+retraining_queue/*.jpg
+retraining_queue/*.png
