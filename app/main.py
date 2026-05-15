@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import create_tables
-from app.routes import detect, reports, health, location, stream
+from app.routes import detect, reports, health, location, stream, dashboard
 from app.services.detector import get_detector
 
 # Configure logging
@@ -77,6 +77,7 @@ app.include_router(reports.router)
 app.include_router(health.router)
 app.include_router(location.router)
 app.include_router(stream.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/", tags=["root"])
@@ -85,6 +86,7 @@ async def root():
     return {
         "message": "PotholeNet API is running",
         "docs": "/docs",
+        "dashboard": "/dashboard",
         "health": "/health",
     }
 
