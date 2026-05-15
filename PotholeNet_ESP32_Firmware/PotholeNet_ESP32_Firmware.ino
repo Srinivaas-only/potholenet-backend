@@ -60,7 +60,7 @@ const char* MDNS_NAME  = "potholenet";   // Access via http://potholenet.local
 const int   STREAM_PORT = 81;         // MJPEG stream port
 const int   CONTROL_PORT = 80;        // HTTP control port
 const int   JPEG_QUALITY = 10;        // 0-63, lower = better quality
-const int   FRAME_SIZE = FRAMESIZE_VGA; // Default: 640x480
+const framesize_t FRAME_SIZE = FRAMESIZE_VGA; // Default: 640x480
 
 // =========================
 // AI-THINKER ESP32-CAM PIN MAP
