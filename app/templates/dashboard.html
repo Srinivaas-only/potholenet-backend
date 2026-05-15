@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PotholeNet Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+        
+        /* Header */
+        .header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border-bottom: 1px solid #334155; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+        .logo { display: flex; align-items: center; gap: 12px; }
+        .logo-icon { width: 40px; height: 40px; background: linear-gradient(135deg, #f59e0b, #ef4444); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+        .logo-text { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, #f59e0b, #ef4444); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .logo-sub { font-size: 12px; color: #94a3b8; font-weight: 400; }
+        .header-status { display: flex; align-items: center; gap: 16px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .status-text { font-size: 13px; color: #94a3b8; }
+
+        /* Tabs */
+        .tabs { display: flex; background: #1e293b; border-bottom: 1px solid #334155; padding: 0 24px; gap: 4px; }
+        .tab { padding: 12px 20px; cursor: pointer; font-size: 14px; font-weight: 500; color: #94a3b8; border-bottom: 2px solid transparent; transition: all 0.2s; }
+        .tab:hover { color: #e2e8f0; }
+        .tab.active { color: #f59e0b; border-bottom-color: #f59e0b; }
+
+        /* Content */
+        .content { padding: 24px; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Stats Cards */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
+        .stat-card .label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .stat-card .value { font-size: 32px; font-weight: 800; }
+        .stat-card .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
+        .text-amber { color: #f59e0b; }
+        .text-green { color: #22c55e; }
+        .text-red { color: #ef4444; }
+        .text-blue { color: #3b82f6; }
+        .text-purple { color: #a855f7; }
+
+        /* Map */
+        #map { height: 500px; border-radius: 12px; border: 1px solid #334155; }
+        .map-legend { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; margin-top: 12px; display: flex; gap: 20px; font-size: 13px; }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+
+        /* Charts */
+        .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+        .chart-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
+        .chart-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 16px; color: #94a3b8; }
+        .chart-card canvas { max-height: 300px; }
+
+        /* Reports Table */
+        .table-container { background: #1e293b; border: 1px solid #334155; border-radius: 12px; overflow: hidden; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #334155; padding: 12px 16px; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; }
+        td { padding: 12px 16px; border-top: 1px solid #334155; font-size: 13px; }
+        tr:hover td { background: rgba(245, 158, 11, 0.05); }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; }
+        .badge-low { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+        .badge-med { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+        .badge-high { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .badge-crit { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
+
+        /* Health */
+        .health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .health-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
+        .health-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 16px; color: #94a3b8; }
+        .health-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; }
+        .health-row:last-child { border-bottom: none; }
+        .health-label { color: #94a3b8; font-size: 13px; }
+        .health-value { font-weight: 600; font-size: 13px; }
+        .health-good { color: #22c55e; }
+        .health-bad { color: #ef4444; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .charts-grid, .health-grid { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+            #map { height: 350px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="logo">
+            <div class="logo-icon">🕳️</div>
+            <div>
+                <div class="logo-text">PotholeNet</div>
+                <div class="logo-sub">Road Hazard Intelligence Dashboard</div>
+            </div>
+        </div>
+        <div class="header-status">
+            <div class="status-dot" id="statusDot"></div>
+            <span class="status-text" id="statusText">Connecting...</span>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('map')">🗺️ Hazard Map</div>
+        <div class="tab" onclick="switchTab('analytics')">📊 Analytics</div>
+        <div class="tab" onclick="switchTab('reports')">📋 Reports</div>
+        <div class="tab" onclick="switchTab('health')">🛡️ System Health</div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+        <!-- Stats always visible -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="label">Total Detections</div>
+                <div class="value text-amber" id="statDetections">—</div>
+                <div class="sub">ML model detections</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Hazard Reports</div>
+                <div class="value text-red" id="statReports">—</div>
+                <div class="sub">User-confirmed reports</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Confidence</div>
+                <div class="value text-blue" id="statConfidence">—</div>
+                <div class="sub">Model confidence %</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Retraining Data</div>
+                <div class="value text-purple" id="statRetraining">—</div>
+                <div class="sub">False negative submissions</div>
+            </div>
+        </div>
+
+        <!-- MAP TAB -->
+        <div class="tab-content active" id="tab-map">
+            <div id="map"></div>
+            <div class="map-legend">
+                <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> Low (1)</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> Medium (2-3)</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> High (4-5)</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div> Critical (6+)</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> ML Detection</div>
+            </div>
+        </div>
+
+        <!-- ANALYTICS TAB -->
+        <div class="tab-content" id="tab-analytics">
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>📉 Detections Timeline (Last 24h)</h3>
+                    <canvas id="timelineChart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>🥧 Mode Distribution</h3>
+                    <canvas id="modeChart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>📊 Severity Distribution</h3>
+                    <canvas id="severityChart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>🎯 Confidence Distribution</h3>
+                    <canvas id="confidenceChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPORTS TAB -->
+        <div class="tab-content" id="tab-reports">
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Location</th>
+                            <th>Severity</th>
+                            <th>Confidence</th>
+                            <th>Vehicle</th>
+                            <th>Last Seen</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportsTable">
+                        <tr><td colspan="6" style="text-align:center;color:#64748b">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- HEALTH TAB -->
+        <div class="tab-content" id="tab-health">
+            <div class="health-grid">
+                <div class="health-card">
+                    <h3>🤖 ML Models</h3>
+                    <div id="modelsHealth">
+                        <div class="health-row"><span class="health-label">Pothole Model</span><span class="health-value" id="mdlPothole">—</span></div>
+                        <div class="health-row"><span class="health-label">YOLOv8n</span><span class="health-value" id="mdlYolo">—</span></div>
+                    </div>
+                </div>
+                <div class="health-card">
+                    <h3>📍 GPS State</h3>
+                    <div id="gpsHealth">
+                        <div class="health-row"><span class="health-label">Latitude</span><span class="health-value" id="gpsLat">—</span></div>
+                        <div class="health-row"><span class="health-label">Longitude</span><span class="health-value" id="gpsLng">—</span></div>
+                        <div class="health-row"><span class="health-label">Speed</span><span class="health-value" id="gpsSpeed">—</span></div>
+                        <div class="health-row"><span class="health-label">Data Age</span><span class="health-value" id="gpsAge">—</span></div>
+                    </div>
+                </div>
+                <div class="health-card">
+                    <h3>⏱️ Server</h3>
+                    <div>
+                        <div class="health-row"><span class="health-label">Uptime</span><span class="health-value" id="srvUptime">—</span></div>
+                        <div class="health-row"><span class="health-label">Total Detections</span><span class="health-value" id="srvDetections">—</span></div>
+                        <div class="health-row"><span class="health-label">Total Reports</span><span class="health-value" id="srvReports">—</span></div>
+                        <div class="health-row"><span class="health-label">Retraining Queue</span><span class="health-value" id="srvRetraining">—</span></div>
+                    </div>
+                </div>
+                <div class="health-card">
+                    <h3>🔌 API Endpoints</h3>
+                    <div>
+                        <div class="health-row"><span class="health-label">Detection</span><span class="health-value health-good">POST /detect/dual-mode</span></div>
+                        <div class="health-row"><span class="health-label">Reports</span><span class="health-value health-good">POST/GET /reports</span></div>
+                        <div class="health-row"><span class="health-label">Location</span><span class="health-value health-good">POST /location/update</span></div>
+                        <div class="health-row"><span class="health-label">Health</span><span class="health-value health-good">GET /health</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ---- STATE ----
+        let map, stats;
+        let timelineChart, modeChart, severityChart, confidenceChart;
+
+        // ---- TABS ----
+        function switchTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('tab-' + name).classList.add('active');
+            if (name === 'map' && map) setTimeout(() => map.invalidateSize(), 100);
+        }
+
+        // ---- SEVERITY COLOR ----
+        function severityColor(score) {
+            if (score <= 1) return '#22c55e';
+            if (score <= 3) return '#f59e0b';
+            if (score <= 5) return '#ef4444';
+            return '#a855f7';
+        }
+        function severityBadge(score) {
+            if (score <= 1) return `<span class="badge badge-low">Low (${score})</span>`;
+            if (score <= 3) return `<span class="badge badge-med">Medium (${score})</span>`;
+            if (score <= 5) return `<span class="badge badge-high">High (${score})</span>`;
+            return `<span class="badge badge-crit">Critical (${score})</span>`;
+        }
+
+        // ---- INIT MAP ----
+        function initMap() {
+            map = L.map('map').setView([3.139, 101.6869], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(map);
+        }
+
+        // ---- UPDATE MAP ----
+        function updateMap(data) {
+            // Clear old markers
+            map.eachLayer(layer => {
+                if (layer instanceof L.CircleMarker) map.removeLayer(layer);
+            });
+
+            // Add hazard reports
+            (data.reports || []).forEach(r => {
+                const color = severityColor(r.severity_score);
+                L.circleMarker([r.latitude, r.longitude], {
+                    radius: 6 + r.severity_score * 2,
+                    fillColor: color,
+                    color: color,
+                    weight: 2,
+                    opacity: 0.8,
+                    fillOpacity: 0.6
+                }).addTo(map).bindPopup(
+                    `<b>Hazard Report</b><br>` +
+                    `Severity: ${r.severity_score}<br>` +
+                    `Confidence: ${r.confidence}%<br>` +
+                    `Vehicle: ${r.vehicle_type}<br>` +
+                    `Last seen: ${r.last_seen ? new Date(r.last_seen).toLocaleString() : 'N/A'}`
+                );
+            });
+
+            // Add ML detections
+            (data.detections || []).forEach(d => {
+                L.circleMarker([d.latitude, d.longitude], {
+                    radius: 5,
+                    fillColor: '#3b82f6',
+                    color: '#3b82f6',
+                    weight: 1,
+                    opacity: 0.6,
+                    fillOpacity: 0.4
+                }).addTo(map).bindPopup(
+                    `<b>ML Detection</b><br>` +
+                    `Confidence: ${d.confidence.toFixed(1)}%<br>` +
+                    `Mode: ${d.mode}<br>` +
+                    `Speed: ${d.velocity_kmh || '?'} km/h<br>` +
+                    `Potholes: ${d.pothole_count || 0}`
+                );
+            });
+
+            // Fit bounds if data exists
+            const all = [...(data.reports || []), ...(data.detections || [])];
+            if (all.length > 0) {
+                const bounds = L.latLngBounds(all.map(p => [p.latitude, p.longitude]));
+                map.fitBounds(bounds.pad(0.1));
+            }
+        }
+
+        // ---- UPDATE CHARTS ----
+        function updateCharts(data) {
+            const chartFont = { family: 'Inter' };
+            const gridColor = '#334155';
+            const textColor = '#94a3b8';
+
+            // Timeline
+            if (timelineChart) timelineChart.destroy();
+            const tl = data.detections_timeline || [];
+            timelineChart = new Chart(document.getElementById('timelineChart'), {
+                type: 'line',
+                data: {
+                    labels: tl.map(t => t.hour ? t.hour.split(' ')[1] : ''),
+                    datasets: [{
+                        label: 'Detections',
+                        data: tl.map(t => t.count),
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245,158,11,0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: textColor, font: chartFont }, grid: { color: gridColor } },
+                        y: { ticks: { color: textColor, font: chartFont }, grid: { color: gridColor } }
+                    }
+                }
+            });
+
+            // Mode pie
+            if (modeChart) modeChart.destroy();
+            const md = data.mode_distribution || {};
+            modeChart = new Chart(document.getElementById('modeChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(md).map(k => k.toUpperCase()),
+                    datasets: [{
+                        data: Object.values(md),
+                        backgroundColor: ['#3b82f6', '#f59e0b', '#22c55e'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { labels: { color: textColor, font: chartFont } } }
+                }
+            });
+
+            // Severity bar
+            if (severityChart) severityChart.destroy();
+            const sd = data.severity_distribution || {};
+            const sortedKeys = Object.keys(sd).sort((a, b) => +a - +b);
+            severityChart = new Chart(document.getElementById('severityChart'), {
+                type: 'bar',
+                data: {
+                    labels: sortedKeys.map(k => `Severity ${k}`),
+                    datasets: [{
+                        label: 'Reports',
+                        data: sortedKeys.map(k => sd[k]),
+                        backgroundColor: sortedKeys.map(k => severityColor(+k)),
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: textColor, font: chartFont }, grid: { color: gridColor } },
+                        y: { ticks: { color: textColor, font: chartFont }, grid: { color: gridColor } }
+                    }
+                }
+            });
+
+            // Confidence histogram
+            if (confidenceChart) confidenceChart.destroy();
+            const confs = (data.detections || []).map(d => d.confidence).filter(c => c > 0);
+            const bins = [0, 20, 40, 60, 80, 100];
+            const binCounts = bins.slice(0, -1).map((_, i) => confs.filter(c => c >= bins[i] && c < bins[i + 1]).length);
+            confidenceChart = new Chart(document.getElementById('confidenceChart'), {
+                type: 'bar',
+                data: {
+                    labels: bins.slice(0, -1).map((b, i) => `${b}-${bins[i + 1]}%`),
+                    datasets: [{
+                        label: 'Detections',
+                        data: binCounts,
+                        backgroundColor: '#3b82f6',
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: textColor, font: chartFont }, grid: { color: gridColor } },
+                        y: { ticks: { color: textColor, font: chartFont }, grid: { color: gridColor } }
+                    }
+                }
+            });
+        }
+
+        // ---- UPDATE REPORTS TABLE ----
+        function updateReports(reports) {
+            const tbody = document.getElementById('reportsTable');
+            if (!reports || reports.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748b">No reports yet</td></tr>';
+                return;
+            }
+            tbody.innerHTML = reports.slice(0, 50).map(r => `
+                <tr>
+                    <td style="font-family:monospace;font-size:11px">${r.id.substring(0, 8)}...</td>
+                    <td>${r.latitude.toFixed(4)}, ${r.longitude.toFixed(4)}</td>
+                    <td>${severityBadge(r.severity_score)}</td>
+                    <td>${r.confidence.toFixed(1)}%</td>
+                    <td>${r.vehicle_type}</td>
+                    <td>${r.last_seen ? new Date(r.last_seen).toLocaleString() : 'N/A'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // ---- UPDATE HEALTH ----
+        function updateHealth(data) {
+            const ml = data.models_loaded || {};
+            document.getElementById('mdlPothole').innerHTML = ml.pothole ? '<span class="health-good">✅ Loaded</span>' : '<span class="health-bad">❌ Not Loaded</span>';
+            document.getElementById('mdlYolo').innerHTML = ml.yolov8 ? '<span class="health-good">✅ Loaded</span>' : '<span class="health-bad">❌ Not Loaded</span>';
+
+            const gps = data.gps_state || {};
+            document.getElementById('gpsLat').textContent = gps.latitude ? gps.latitude.toFixed(6) : 'No data';
+            document.getElementById('gpsLng').textContent = gps.longitude ? gps.longitude.toFixed(6) : 'No data';
+            document.getElementById('gpsSpeed').textContent = gps.velocity_kmh != null ? `${gps.velocity_kmh} km/h` : 'No data';
+            document.getElementById('gpsAge').textContent = gps.age_seconds != null ? `${gps.age_seconds}s ago` : 'No data';
+
+            document.getElementById('srvUptime').textContent = formatUptime(data.uptime_seconds);
+            document.getElementById('srvDetections').textContent = (data.counts || {}).total_detections || 0;
+            document.getElementById('srvReports').textContent = (data.counts || {}).total_reports || 0;
+            document.getElementById('srvRetraining').textContent = (data.counts || {}).total_retraining || 0;
+        }
+
+        function formatUptime(seconds) {
+            if (!seconds) return '—';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${h}h ${m}m ${s}s`;
+        }
+
+        // ---- FETCH & UPDATE ----
+        async function refresh() {
+            try {
+                const res = await fetch('/api/dashboard/stats');
+                const data = await res.json();
+
+                if (data.error) {
+                    document.getElementById('statusDot').style.background = '#ef4444';
+                    document.getElementById('statusText').textContent = 'Error: ' + data.error;
+                    return;
+                }
+
+                document.getElementById('statusDot').style.background = '#22c55e';
+                document.getElementById('statusText').textContent = 'Live — updated just now';
+
+                // Stats
+                document.getElementById('statDetections').textContent = (data.counts || {}).total_detections || 0;
+                document.getElementById('statReports').textContent = (data.counts || {}).total_reports || 0;
+                document.getElementById('statConfidence').textContent = data.avg_confidence ? data.avg_confidence + '%' : '—';
+                document.getElementById('statRetraining').textContent = (data.counts || {}).total_retraining || 0;
+
+                // Map
+                updateMap(data);
+
+                // Charts
+                updateCharts(data);
+
+                // Reports table
+                updateReports(data.reports);
+
+                // Health
+                updateHealth(data);
+
+            } catch (e) {
+                document.getElementById('statusDot').style.background = '#ef4444';
+                document.getElementById('statusText').textContent = 'Connection failed';
+                console.error('Dashboard fetch error:', e);
+            }
+        }
+
+        // ---- INIT ----
+        initMap();
+        refresh();
+        setInterval(refresh, 10000); // Auto-refresh every 10s
+    </script>
+</body>
+</html>
