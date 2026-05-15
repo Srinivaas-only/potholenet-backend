@@ -566,8 +566,7 @@ void setup() {
   // ── mDNS — access via http://potholenet.local ──
   if (wifiConnected && MDNS.begin(MDNS_NAME)) {
     Serial.printf("[MDNS] Started! Access at http://%s.local\n", MDNS_NAME);
-    MDNS.addService("http", "tcp", 80);
-    MDNS.addService("http", "tcp", 81);
+    MDNS.addService("http", "tcp", 80);   // port 81 stream discovered via status page
   }
 
   IPAddress IP = WiFi.localIP();
@@ -577,7 +576,9 @@ void setup() {
   Serial.println("╠══════════════════════════════════════╣");
   Serial.printf("║  SSID:     %-25s║\n", WIFI_SSID);
   Serial.printf("║  IP:       %-25s║\n", IP.toString().c_str());
-  Serial.printf("║  mDNS:     http://%-17s║\n", String(MDNS_NAME) + ".local");
+  char mdnsStr[32];
+  snprintf(mdnsStr, sizeof(mdnsStr), "http://%s.local", MDNS_NAME);
+  Serial.printf("║  mDNS:     %-25s║\n", mdnsStr);
   Serial.printf("║  Stream:   http://%s:81/stream  ║\n", IP.toString().c_str());
   Serial.printf("║  Capture:  http://%s/capture     ║\n", IP.toString().c_str());
   Serial.printf("║  Heap:     %-5lu bytes free        ║\n", (unsigned long)ESP.getFreeHeap());
