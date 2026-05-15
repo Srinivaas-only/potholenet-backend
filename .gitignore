@@ -36,6 +36,9 @@ venv/
 # Logs
 *.log
 
+# ESP32 secrets (keep .example)
+PotholeNet_ESP32_Firmware/secrets.h
+
 # Test uploads
 potholenet-backend/test.jpg
 retraining_queue/*.jpg
