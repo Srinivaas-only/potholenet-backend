@@ -9,14 +9,14 @@
  *   - Phone connects to the ESP32's Wi-Fi network
  *   - Streams live camera feed as MJPEG
  *   - Provides single-frame capture for ML detection
- *   - LED flash control, servo control, camera settings
+ *   - Camera settings
  *   - Captive portal auto-redirects phone to status page
  *
  * ENDPOINTS:
  *   http://192.168.4.1/              → Status page (HTML)
  *   http://192.168.4.1:81/stream     → MJPEG live stream
  *   http://192.168.4.1/capture       → Single JPEG capture
- *   http://192.168.4.1/control       → Control (LED, servo, camera)
+ *   http://192.168.4.1/control       → Control (camera settings)
  *   http://192.168.4.1/heartbeat     → JSON status for app
  *   http://192.168.4.1/status        → Detailed JSON diagnostics
  *
@@ -57,9 +57,6 @@
 // =========================
 const int   AP_CHANNEL  = 6;          // Wi-Fi channel (1-13)
 const int   MAX_CLIENTS = 4;          // Max connected devices
-const int   SERVO_PIN   = 12;         // GPIO12 — only free pin on AI-Thinker
-const bool  ENABLE_SERVO = false;     // Set true if servo is connected
-const int   LED_PIN     = 4;          // Built-in flash LED
 
 // Stream settings
 const int   STREAM_PORT = 81;         // MJPEG stream port
@@ -96,11 +93,6 @@ DNSServer dnsServer;
 bool cameraReady = false;
 unsigned long bootTime = 0;
 int streamClients = 0;
-
-// Servo
-#include <ESP32Servo.h>
-Servo myServo;
-int servoAngle = 90;  // Center
 
 // MJPEG boundary
 #define PART_BOUNDARY "123456789000000000000987654321"
@@ -157,12 +149,9 @@ static esp_err_t index_handler(httpd_req_t *req) {
     "<img src='http://192.168.4.1/capture' alt='Camera feed'>"
     "</div>"
 
-    "<div class='card grid'>"
-    "<div><div class='label'>Flash LED</div>"
-    "<a href='/control?led=on' class='btn' style='background:#f59e0b'>ON</a>"
-    "<a href='/control?led=off' class='btn'>OFF</a></div>"
-    "<div><div class='label'>API Endpoints</div>"
-    "<div class='value' style='font-size:0.8rem'>/capture<br>/heartbeat<br>/status<br>/control</div></div>"
+    "<div class='card'>"
+    "<div class='label'>API Endpoints</div>"
+    "<div class='value' style='font-size:0.8rem'>/capture<br>/heartbeat<br>/status<br>/control</div>"
     "</div>"
 
     "<div class='card'>"
@@ -271,8 +260,6 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 
 // =========================
 // HANDLER: Control endpoint
-//   /control?led=on|off
-//   /control?servo=left|right|center  (or servo=N for angle 0-180)
 //   /control?brightness=N (-2 to 2)
 //   /control?contrast=N   (-2 to 2)
 //   /control?resolution=VGA|QVGA|CIF
@@ -287,33 +274,6 @@ static esp_err_t control_handler(httpd_req_t *req) {
 
   if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
     sensor_t *s = esp_camera_sensor_get();
-
-    // LED flash control
-    if (httpd_query_key_value(query, "led", param, sizeof(param)) == ESP_OK) {
-      if (strcmp(param, "on") == 0) {
-        digitalWrite(LED_PIN, HIGH);
-        Serial.println("[CTRL] LED ON");
-      } else {
-        digitalWrite(LED_PIN, LOW);
-        Serial.println("[CTRL] LED OFF");
-      }
-    }
-
-    // Servo control
-    if (httpd_query_key_value(query, "servo", param, sizeof(param)) == ESP_OK) {
-      if (ENABLE_SERVO) {
-        int angle = servoAngle; // default current
-        if (strcmp(param, "left") == 0)  angle = 0;
-        else if (strcmp(param, "right") == 0) angle = 180;
-        else if (strcmp(param, "center") == 0) angle = 90;
-        else angle = atoi(param);  // numeric angle
-
-        angle = constrain(angle, 0, 180);
-        myServo.write(angle);
-        servoAngle = angle;
-        Serial.printf("[CTRL] Servo → %d°\n", angle);
-      }
-    }
 
     // Camera brightness
     if (httpd_query_key_value(query, "brightness", param, sizeof(param)) == ESP_OK) {
@@ -412,8 +372,6 @@ static esp_err_t status_handler(httpd_req_t *req) {
     "\"heap_min\":%lu,"
     "\"camera\":%s,"
     "\"stream_clients\":%d,"
-    "\"servo_angle\":%d,"
-    "\"led\":%d,"
     "\"resolution\":\"VGA\""
     "}",
     AP_SSID,
@@ -422,9 +380,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
     (unsigned long)ESP.getFreeHeap(),
     (unsigned long)ESP.getMinFreeHeap(),
     cameraReady ? "true" : "false",
-    streamClients,
-    servoAngle,
-    digitalRead(LED_PIN) ? 1 : 0
+    streamClients
   );
   send_json(req, buf);
   return ESP_OK;
@@ -499,10 +455,6 @@ void setup() {
 
   bootTime = millis();
 
-  // LED pin
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-
   // ── Camera init ──
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -548,11 +500,8 @@ void setup() {
     Serial.printf("[CAM] INIT FAILED (0x%x)\n", err);
     Serial.println("[CAM] Check wiring, power supply (5V/1A+), add 1000uF cap");
     cameraReady = false;
-    // Blink LED rapidly to indicate failure
-    while (true) {
-      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-      delay(200);
-    }
+    // Halt — camera is required
+    while (true) { delay(1000); }
   }
 
   cameraReady = true;
@@ -580,13 +529,6 @@ void setup() {
   s->set_lenc(s, 1);            // Lens correction
   s->set_dcw(s, 1);             // Downsize enable
 
-  // ── Servo init ──
-  if (ENABLE_SERVO) {
-    myServo.attach(SERVO_PIN, 500, 2400);
-    myServo.write(servoAngle);
-    Serial.println("[SERVO] Initialized on GPIO12");
-  }
-
   // ── Wi-Fi AP ──
   Serial.println("[WIFI] Starting Access Point...");
   WiFi.mode(WIFI_AP);
@@ -613,14 +555,6 @@ void setup() {
   // ── Start HTTP servers ──
   startServers();
 
-  // ── Ready indicator: 3 blinks ──
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(150);
-    digitalWrite(LED_PIN, LOW);
-    delay(150);
-  }
-
   Serial.println("[READY] System online. Waiting for connections...");
 }
 
@@ -631,15 +565,7 @@ void loop() {
   // Process DNS requests for captive portal
   dnsServer.processNextRequest();
 
-  // Heartbeat blink every 5 seconds
-  static unsigned long lastBlink = 0;
-  if (millis() - lastBlink > 5000) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(30);
-    digitalWrite(LED_PIN, LOW);
-    lastBlink = millis();
-
-    // Periodic health log (every 30 seconds)
+  // Periodic health log (every 30 seconds)
     static unsigned long lastLog = 0;
     if (millis() - lastLog > 30000) {
       Serial.printf("[HEALTH] Heap: %lu KB | Clients: %d | Stream: %d | Uptime: %lu s\n",
@@ -650,7 +576,6 @@ void loop() {
       );
       lastLog = millis();
     }
-  }
 
   delay(10);  // Small delay to prevent watchdog issues
 }
