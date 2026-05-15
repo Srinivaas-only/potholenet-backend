@@ -69,6 +69,76 @@ function usePhoneCamera(active: boolean) {
 }
 
 // ============================================
+// ESP32 MJPEG STREAM HOOK — Low-latency auto-reconnect
+// Uses the actual <img> element — no duplicate connections
+// ============================================
+function useESP32Stream(baseUrl: string, active: boolean) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [streamState, setStreamState] = useState<"loading" | "live" | "error">("loading");
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCount = useRef(0);
+
+  // Reconnect by toggling the img src (re-triggers onload/onerror)
+  const reconnect = useCallback(() => {
+    const img = imgRef.current;
+    if (!img) return;
+    img.src = ""; // clear first
+    // Small delay to ensure browser aborts previous connection
+    setTimeout(() => {
+      if (img) {
+        img.src = `${baseUrl}:81/stream?t=${Date.now()}`;
+      }
+    }, 100);
+  }, [baseUrl]);
+
+  useEffect(() => {
+    if (!active || !baseUrl) {
+      setStreamState("loading");
+      return;
+    }
+
+    const img = imgRef.current;
+    if (!img) return;
+
+    let cancelled = false;
+
+    const handleLoad = () => {
+      if (!cancelled) {
+        setStreamState("live");
+        retryCount.current = 0;
+      }
+    };
+
+    const handleError = () => {
+      if (!cancelled) {
+        setStreamState("error");
+        // Exponential backoff: 2s, 4s, 8s, max 10s
+        const delay = Math.min(2000 * Math.pow(2, retryCount.current), 10000);
+        retryCount.current++;
+        reconnectTimer.current = setTimeout(reconnect, delay);
+      }
+    };
+
+    img.addEventListener("load", handleLoad);
+    img.addEventListener("error", handleError);
+
+    // Start the stream
+    setStreamState("loading");
+    img.src = `${baseUrl}:81/stream?t=${Date.now()}`;
+
+    return () => {
+      cancelled = true;
+      img.removeEventListener("load", handleLoad);
+      img.removeEventListener("error", handleError);
+      if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+      img.src = "";
+    };
+  }, [baseUrl, active, reconnect]);
+
+  return { imgRef, streamState };
+}
+
+// ============================================
 // OVERLAY COMPONENTS
 // ============================================
 function AlertBorder({ config }: { config: typeof SCENES[AppScene] }) {
@@ -181,20 +251,22 @@ function CameraView({
 }) {
   const isESP32 = settings.cameraSource === "esp32";
   const phoneCam = usePhoneCamera(!isESP32);
-  const imgRef = useRef<HTMLImageElement>(null);
-  const [streamError, setStreamError] = useState(false);
+  const espStream = useESP32Stream(settings.esp32Url, isESP32);
   const config = SCENES[scene];
 
+  // Keep mediaRef pointing to the correct element for detection
   useEffect(() => {
     if (isESP32) {
-      mediaRef.current = imgRef.current;
+      mediaRef.current = espStream.imgRef.current;
     } else {
       mediaRef.current = phoneCam.videoRef.current;
     }
     onCameraError(!!phoneCam.error);
   });
 
-  const showDisconnect = (isESP32 && streamError) || (!isESP32 && !!phoneCam.error);
+  const espStreamReady = espStream.streamState === "live";
+  const showDisconnect = (isESP32 && espStream.streamState === "error") || (!isESP32 && !!phoneCam.error);
+  const showLoading = isESP32 && espStream.streamState === "loading";
 
   return (
     <div className="flex-1 min-h-0 flex flex-col px-3 pt-2 pb-1">
@@ -207,10 +279,9 @@ function CameraView({
         )}
 
         {isESP32 && (
-          <img ref={imgRef} src={`${settings.esp32Url}:81/stream`}
-            alt="ESP32 camera" crossOrigin="anonymous"
-            onError={() => setStreamError(true)}
-            onLoad={() => setStreamError(false)}
+          <img ref={espStream.imgRef}
+            src={`${settings.esp32Url}:81/stream`}
+            alt="ESP32 camera"
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
         )}
 
@@ -221,9 +292,17 @@ function CameraView({
         <StatusDots detections={config.detections} />
         <CameraInfoBar
           gpsSpeed={gpsSpeed} inferenceMs={inferenceMs} modelLoaded={modelLoaded}
-          cameraLabel={isESP32 ? (espConnected ? "ESP32" : "OFF") : (!phoneCam.error ? "PHONE" : "ERR")} />
+          cameraLabel={isESP32 ? (espStreamReady ? "ESP32" : showLoading ? "..." : "OFF") : (!phoneCam.error ? "PHONE" : "ERR")} />
 
         {showDisconnect && <DisconnectOverlay />}
+        {showLoading && !showDisconnect && (
+          <div className="absolute inset-0 z-[20] flex flex-col items-center justify-center"
+            style={{ background: "rgba(0,0,0,0.85)", borderRadius: 12 }}>
+            <div className="animate-spin w-10 h-10 border-3 border-[#22d3ee33] border-t-[#22d3ee] rounded-full mb-3" />
+            <span style={{ fontSize: 14, fontWeight: 500, color: "#22d3ee" }}>Connecting to ESP32-CAM...</span>
+            <span style={{ fontSize: 11, color: "#555", marginTop: 4 }}>{settings.esp32Url}</span>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-center gap-3 py-3">

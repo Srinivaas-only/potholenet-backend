@@ -59,8 +59,9 @@ const char* MDNS_NAME  = "potholenet";   // Access via http://potholenet.local
 // Stream settings
 const int   STREAM_PORT = 81;         // MJPEG stream port
 const int   CONTROL_PORT = 80;        // HTTP control port
-const int   JPEG_QUALITY = 10;        // 0-63, lower = better quality
-const framesize_t FRAME_SIZE = FRAMESIZE_VGA; // Default: 640x480
+const int   JPEG_QUALITY = 18;        // 0-63, higher = smaller file (18 ≈ 5KB/frame at QVGA)
+const framesize_t FRAME_SIZE = FRAMESIZE_QVGA; // Stream: 320x240 for low latency
+const int   STREAM_FPS_CAP = 20;      // Max stream FPS — prevents buffer buildup
 
 // =========================
 // AI-THINKER ESP32-CAM PIN MAP
@@ -193,6 +194,10 @@ static esp_err_t stream_handler(httpd_req_t *req) {
   streamClients++;
   Serial.printf("[STREAM] Client connected (total: %d)\n", streamClients);
 
+  // FPS cap delay (milliseconds per frame)
+  const unsigned long frameDelay = 1000 / STREAM_FPS_CAP;
+  unsigned long lastFrame = millis();
+
   while (true) {
     fb = esp_camera_fb_get();
     if (!fb) {
@@ -231,7 +236,13 @@ static esp_err_t stream_handler(httpd_req_t *req) {
     res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
     if (res != ESP_OK) break;
 
-    // Yield to watchdog
+    // FPS cap — wait if we're ahead of schedule
+    unsigned long now = millis();
+    unsigned long elapsed = now - lastFrame;
+    if (elapsed < frameDelay) {
+      delay(frameDelay - elapsed);
+    }
+    lastFrame = millis();
     taskYIELD();
   }
 
