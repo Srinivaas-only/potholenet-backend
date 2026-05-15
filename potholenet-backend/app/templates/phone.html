@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>PotholeNet</title>
+    <style>
+        :root {
+            --cyan: #00e5ff; --red: #ff1744; --orange: #ff9100;
+            --purple: #d500f9; --blue: #2979ff; --green: #00e676;
+            --yellow: #ffea00; --bg: #000; --glass: rgba(0,0,0,0.6);
+        }
+        * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+        body { background:#000; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; overflow:hidden; height:100vh; width:100vw; position:relative; touch-action:none; }
+
+        /* === CAMERA FEED === */
+        #cameraFeed { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; z-index:1; background:#111; }
+
+        /* === SCANLINES OVERLAY === */
+        .scanlines { position:absolute; top:0; left:0; width:100%; height:100%; z-index:2; pointer-events:none;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px); }
+
+        /* === STATUS BAR === */
+        .status-bar { position:absolute; top:0; left:0; right:0; z-index:50; padding:12px 16px; padding-top:max(12px, env(safe-area-inset-top));
+            display:flex; justify-content:space-between; align-items:center; background:linear-gradient(180deg, rgba(0,0,0,0.7) 0%, transparent 100%); }
+        .status-mode { font-size:13px; font-weight:700; letter-spacing:1px; padding:4px 12px; border-radius:20px; border:1px solid; }
+        .mode-driving { color:var(--green); border-color:var(--green); text-shadow:0 0 10px var(--green); }
+        .mode-reverse { color:var(--orange); border-color:var(--orange); text-shadow:0 0 10px var(--orange);
+            animation: reversePulse 800ms ease-in-out infinite; }
+        @keyframes reversePulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+        .status-speed { font-size:12px; color:var(--cyan); font-weight:600; font-variant-numeric:tabular-nums; }
+
+        /* === DETECTION INDICATOR (top-right) === */
+        .detection-indicator { position:absolute; top:60px; right:16px; z-index:50; display:flex; flex-direction:column; align-items:center; gap:6px; }
+        .indicator-circle { width:36px; height:36px; border-radius:50%; border:2px solid var(--blue); display:flex; align-items:center; justify-content:center;
+            font-size:16px; transition: all 0.3s ease; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); }
+        .indicator-circle.detected-pothole { border-color:var(--red); box-shadow:0 0 12px var(--red), inset 0 0 8px rgba(255,23,68,0.3); background:rgba(255,23,68,0.2); }
+        .indicator-circle.detected-human { border-color:var(--orange); box-shadow:0 0 12px var(--orange), inset 0 0 8px rgba(255,145,0,0.3); background:rgba(255,145,0,0.2); }
+        .indicator-circle.detected-vehicle { border-color:var(--purple); box-shadow:0 0 12px var(--purple), inset 0 0 8px rgba(213,0,249,0.3); background:rgba(213,0,249,0.2); }
+        .indicator-confidence { font-size:11px; color:var(--cyan); font-weight:700; margin-top:2px; text-shadow:0 0 6px var(--cyan); }
+
+        /* === ALERT TEXT === */
+        .alert-text { position:absolute; top:20%; left:50%; transform:translateX(-50%); z-index:40; font-size:20px; font-weight:800;
+            text-align:center; padding:8px 24px; border-radius:12px; pointer-events:none; white-space:nowrap;
+            opacity:0; transition: opacity 0.3s ease; }
+        .alert-text.visible { opacity:1; }
+        .alert-pothole { color:#fff; background:rgba(255,23,68,0.3); border:1px solid var(--red); text-shadow:0 0 10px var(--red); }
+        .alert-human { color:#fff; background:rgba(255,145,0,0.3); border:1px solid var(--orange); text-shadow:0 0 10px var(--orange); }
+        .alert-vehicle-reverse { color:#fff; text-shadow:0 0 20px var(--cyan), 0 0 40px var(--cyan); font-size:28px; }
+
+        /* === RAINBOW OVERLAY (REVERSE + VEHICLE) === */
+        .rainbow-overlay { position:absolute; top:0; left:0; width:100%; height:100%; z-index:30; pointer-events:none;
+            opacity:0; transition: opacity 0.5s ease; }
+        .rainbow-overlay.active { opacity:1; }
+        .rainbow-bg { position:absolute; top:0; left:0; width:100%; height:100%; opacity:0.3;
+            background: linear-gradient(135deg, #ff0000, #ff8800, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+            background-size: 400% 400%; animation: rainbowFlow 3s ease infinite; }
+        @keyframes rainbowFlow { 0%{background-position:0% 0%} 50%{background-position:100% 100%} 100%{background-position:0% 0%} }
+        .rainbow-border { position:absolute; top:0; left:0; width:100%; height:100%; border:3px solid transparent;
+            border-image: linear-gradient(135deg, #ff0000, #ff8800, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000) 1;
+            animation: rainbowBorder 2s linear infinite; }
+        @keyframes rainbowBorder { to { filter: hue-rotate(360deg); } }
+        .rainbow-text { position:absolute; top:15%; left:50%; transform:translateX(-50%); font-size:28px; font-weight:900; color:#fff;
+            text-shadow: 0 0 20px var(--cyan), 0 0 40px var(--cyan), 0 0 60px var(--cyan); letter-spacing:2px; white-space:nowrap; }
+
+        /* === POTHOLE OVERLAY === */
+        .pothole-overlay { position:absolute; top:0; left:0; width:100%; height:100%; z-index:25; pointer-events:none;
+            opacity:0; transition: opacity 0.5s ease; }
+        .pothole-overlay.active { opacity:1; }
+        .pothole-tint { position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(255,23,68,0.05); }
+        .pothole-border { position:absolute; top:0; left:0; width:100%; height:100%;
+            border:3px solid var(--red); animation: potholePulse 3s ease-in-out infinite;
+            box-shadow: inset 0 0 30px rgba(255,23,68,0.15), 0 0 15px rgba(255,23,68,0.3); }
+        @keyframes potholePulse { 0%,100%{opacity:0.4} 50%{opacity:1} }
+        .pothole-text { position:absolute; top:15%; left:50%; transform:translateX(-50%); font-size:22px; font-weight:800; color:var(--red);
+            text-shadow:0 0 15px var(--red); white-space:nowrap; }
+        .confidence-bar { position:absolute; top:22%; left:50%; transform:translateX(-50%); width:200px; height:6px;
+            background:rgba(255,255,255,0.1); border-radius:3px; overflow:hidden; }
+        .confidence-fill { height:100%; background:var(--red); border-radius:3px; transition: width 0.3s ease;
+            box-shadow:0 0 8px var(--red); }
+
+        /* === VEHICLE DRIVING WARNING (bottom-right) === */
+        .vehicle-driving-warning { position:absolute; bottom:80px; right:16px; z-index:40; padding:8px 14px;
+            border-radius:8px; border:1px solid var(--orange); background:rgba(255,145,0,0.15);
+            backdrop-filter:blur(4px); font-size:12px; font-weight:700; color:var(--orange);
+            animation: vehiclePulse 2s ease-in-out infinite; opacity:0; transition:opacity 0.3s; }
+        .vehicle-driving-warning.visible { opacity:1; }
+        @keyframes vehiclePulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+        /* === NEARBY HAZARDS (floating cards) === */
+        .hazards-panel { position:absolute; left:16px; bottom:80px; z-index:45; display:flex; flex-direction:column; gap:8px; max-width:calc(100% - 32px); }
+        .hazard-card { display:flex; align-items:center; gap:10px; padding:10px 14px; border-radius:10px;
+            background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); border:1px solid; font-size:13px; animation: slideInLeft 0.3s ease; }
+        @keyframes slideInLeft { from{transform:translateX(-100%);opacity:0} to{transform:translateX(0);opacity:1} }
+        .hazard-card .distance { font-weight:800; font-size:15px; min-width:50px; }
+        .hazard-card .severity { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:600; }
+        .hazard-severity-low { border-color:var(--green); } .hazard-severity-low .distance { color:var(--green); } .hazard-severity-low .severity { background:rgba(0,230,118,0.2); color:var(--green); }
+        .hazard-severity-med { border-color:var(--yellow); } .hazard-severity-med .distance { color:var(--yellow); } .hazard-severity-med .severity { background:rgba(255,234,0,0.2); color:var(--yellow); }
+        .hazard-severity-high { border-color:var(--orange); } .hazard-severity-high .distance { color:var(--orange); } .hazard-severity-high .severity { background:rgba(255,145,0,0.2); color:var(--orange); }
+        .hazard-severity-crit { border-color:var(--red); animation: critPulse 1s ease-in-out infinite; } .hazard-severity-crit .distance { color:var(--red); } .hazard-severity-crit .severity { background:rgba(255,23,68,0.2); color:var(--red); }
+        @keyframes critPulse { 0%,100%{box-shadow:0 0 5px var(--red)} 50%{box-shadow:0 0 15px var(--red)} }
+
+        /* === BOTTOM SWIPE ZONE === */
+        .swipe-zone { position:absolute; bottom:0; left:0; right:0; height:20%; z-index:60; }
+        .bottom-bar { position:absolute; bottom:0; left:0; right:0; z-index:45; padding:12px 16px;
+            padding-bottom:max(12px, env(safe-area-inset-bottom)); display:flex; justify-content:center; align-items:center; gap:8px;
+            background:linear-gradient(0deg, rgba(0,0,0,0.7) 0%, transparent 100%); }
+        .swipe-handle { width:40px; height:4px; border-radius:2px; background:rgba(255,255,255,0.4); margin-bottom:4px; }
+        .swipe-hint { font-size:11px; color:rgba(255,255,255,0.4); }
+
+        /* === HAZARD REPORT PANEL (swipe up) === */
+        .report-panel { position:absolute; bottom:0; left:0; right:0; z-index:70; background:rgba(10,10,15,0.95);
+            backdrop-filter:blur(20px); border-radius:20px 20px 0 0; padding:20px; padding-bottom:max(20px, env(safe-area-inset-bottom));
+            transform:translateY(100%); transition:transform 0.3s cubic-bezier(0.4,0,0.2,1); }
+        .report-panel.open { transform:translateY(0); }
+        .report-panel h3 { font-size:18px; font-weight:700; margin-bottom:16px; text-align:center; }
+        .report-buttons { display:flex; gap:10px; margin-bottom:16px; }
+        .report-btn { flex:1; padding:14px 8px; border-radius:12px; border:1px solid; background:rgba(255,255,255,0.05);
+            color:#fff; font-size:14px; font-weight:600; cursor:pointer; text-align:center; transition:all 0.2s; }
+        .report-btn:active { transform:scale(0.95); }
+        .report-btn-pothole { border-color:var(--red); } .report-btn-pothole:active { background:rgba(255,23,68,0.2); }
+        .report-btn-obstruction { border-color:var(--orange); } .report-btn-obstruction:active { background:rgba(255,145,0,0.2); }
+        .report-btn-animal { border-color:var(--purple); } .report-btn-animal:active { background:rgba(213,0,249,0.2); }
+        .severity-select { display:flex; gap:8px; margin-bottom:16px; }
+        .sev-option { flex:1; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); text-align:center; font-size:12px; cursor:pointer; background:transparent; color:#fff; }
+        .sev-option.selected { border-color:var(--cyan); background:rgba(0,229,255,0.1); color:var(--cyan); }
+        .report-submit { width:100%; padding:14px; border-radius:12px; border:none; background:var(--cyan); color:#000; font-size:16px; font-weight:700; cursor:pointer; }
+        .report-submit:active { opacity:0.8; }
+        .report-close { position:absolute; top:16px; right:16px; width:30px; height:30px; border-radius:50%; border:1px solid rgba(255,255,255,0.2); background:transparent; color:#fff; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+
+        /* === DETECTION HISTORY (tap indicator) === */
+        .history-panel { position:absolute; top:0; right:0; width:min(300px, 80vw); height:100%; z-index:70;
+            background:rgba(10,10,15,0.95); backdrop-filter:blur(20px); padding:20px;
+            padding-top:max(20px, env(safe-area-inset-top)); transform:translateX(100%);
+            transition:transform 0.3s cubic-bezier(0.4,0,0.2,1); overflow-y:auto; }
+        .history-panel.open { transform:translateX(0); }
+        .history-panel h3 { font-size:16px; font-weight:700; margin-bottom:12px; }
+        .history-item { padding:10px; border-bottom:1px solid rgba(255,255,255,0.1); font-size:13px; }
+        .history-time { color:rgba(255,255,255,0.5); font-size:11px; }
+        .history-close { position:absolute; top:16px; right:16px; width:30px; height:30px; border-radius:50%;
+            border:1px solid rgba(255,255,255,0.2); background:transparent; color:#fff; font-size:16px; cursor:pointer;
+            display:flex; align-items:center; justify-content:center; }
+
+        /* === TELEMETRY (tap status bar) === */
+        .telemetry-panel { position:absolute; top:50px; left:16px; right:16px; z-index:65; background:rgba(10,10,15,0.9);
+            backdrop-filter:blur(12px); border-radius:12px; border:1px solid rgba(255,255,255,0.1); padding:16px;
+            transform:translateY(-10px); opacity:0; pointer-events:none; transition:all 0.2s ease; }
+        .telemetry-panel.open { transform:translateY(0); opacity:1; pointer-events:auto; }
+        .telemetry-row { display:flex; justify-content:space-between; padding:4px 0; font-size:12px; }
+        .telemetry-label { color:rgba(255,255,255,0.5); }
+        .telemetry-value { color:var(--cyan); font-weight:600; font-variant-numeric:tabular-nums; }
+
+        /* === FREEZE FRAME === */
+        .freeze-overlay { position:absolute; top:0; left:0; width:100%; height:100%; z-index:55; display:none;
+            flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,0.3); }
+        .freeze-overlay.active { display:flex; }
+        .freeze-text { font-size:16px; font-weight:700; color:var(--cyan); margin-top:16px; }
+        .freeze-actions { display:flex; gap:12px; margin-top:20px; }
+        .freeze-btn { padding:10px 20px; border-radius:10px; border:1px solid; background:rgba(0,0,0,0.5);
+            color:#fff; font-size:14px; cursor:pointer; }
+    </style>
+</head>
+<body>
+    <!-- Camera Feed -->
+    <img id="cameraFeed" src="" alt="Camera feed" crossorigin="anonymous">
+
+    <!-- Scanlines -->
+    <div class="scanlines"></div>
+
+    <!-- Status Bar -->
+    <div class="status-bar" id="statusBar">
+        <div class="status-mode mode-driving" id="modeIndicator">DRIVING</div>
+        <div class="status-speed" id="speedDisplay">0 km/h</div>
+    </div>
+
+    <!-- Detection Indicator (top-right) -->
+    <div class="detection-indicator" id="detectionIndicator">
+        <div class="indicator-circle" id="indPothole">🕳️</div>
+        <div class="indicator-circle" id="indHuman">🧍</div>
+        <div class="indicator-circle" id="indVehicle">🚗</div>
+        <div class="indicator-confidence" id="indConfidence">0%</div>
+    </div>
+
+    <!-- Pothole Overlay -->
+    <div class="pothole-overlay" id="potholeOverlay">
+        <div class="pothole-tint"></div>
+        <div class="pothole-border"></div>
+        <div class="pothole-text">⚠️ POTHOLE DETECTED</div>
+        <div class="confidence-bar"><div class="confidence-fill" id="potholeConfBar" style="width:0%"></div></div>
+    </div>
+
+    <!-- Rainbow Overlay (REVERSE + VEHICLE) -->
+    <div class="rainbow-overlay" id="rainbowOverlay">
+        <div class="rainbow-bg"></div>
+        <div class="rainbow-border"></div>
+        <div class="rainbow-text">⚠️ VEHICLE DETECTED</div>
+    </div>
+
+    <!-- Alert Text (general) -->
+    <div class="alert-text" id="alertText"></div>
+
+    <!-- Vehicle Driving Warning (bottom-right) -->
+    <div class="vehicle-driving-warning" id="vehicleDrivingWarn">🚗 VEHICLE NEAR</div>
+
+    <!-- Nearby Hazards -->
+    <div class="hazards-panel" id="hazardsPanel"></div>
+
+    <!-- Bottom Bar -->
+    <div class="bottom-bar">
+        <div style="text-align:center">
+            <div class="swipe-handle"></div>
+            <div class="swipe-hint">Swipe up to report</div>
+        </div>
+    </div>
+
+    <!-- Swipe Zone -->
+    <div class="swipe-zone" id="swipeZone"></div>
+
+    <!-- Report Panel -->
+    <div class="report-panel" id="reportPanel">
+        <button class="report-close" onclick="closeReportPanel()">✕</button>
+        <h3>📝 Report Hazard</h3>
+        <div class="report-buttons">
+            <button class="report-btn report-btn-pothole" onclick="selectReportType('pothole', this)">🕳️ Pothole</button>
+            <button class="report-btn report-btn-obstruction" onclick="selectReportType('obstruction', this)">🚧 Block</button>
+            <button class="report-btn report-btn-animal" onclick="selectReportType('animal', this)">🐕 Animal</button>
+        </div>
+        <div class="severity-select">
+            <button class="sev-option" onclick="selectSeverity(1,this)">Low</button>
+            <button class="sev-option" onclick="selectSeverity(2,this)">Med</button>
+            <button class="sev-option" onclick="selectSeverity(3,this)">High</button>
+        </div>
+        <button class="report-submit" onclick="submitReport()">Submit Report</button>
+    </div>
+
+    <!-- Detection History -->
+    <div class="history-panel" id="historyPanel">
+        <button class="history-close" onclick="closeHistory()">✕</button>
+        <h3>📋 Detection History</h3>
+        <div id="historyList"></div>
+    </div>
+
+    <!-- Telemetry -->
+    <div class="telemetry-panel" id="telemetryPanel">
+        <div class="telemetry-row"><span class="telemetry-label">Frame Rate</span><span class="telemetry-value" id="telFPS">—</span></div>
+        <div class="telemetry-row"><span class="telemetry-label">Inference</span><span class="telemetry-value" id="telInference">—</span></div>
+        <div class="telemetry-row"><span class="telemetry-label">Pothole Conf</span><span class="telemetry-value" id="telPotholeConf">—</span></div>
+        <div class="telemetry-row"><span class="telemetry-label">Mode</span><span class="telemetry-value" id="telMode">—</span></div>
+        <div class="telemetry-row"><span class="telemetry-label">GPS Accuracy</span><span class="telemetry-value" id="telGPS">—</span></div>
+        <div class="telemetry-row"><span class="telemetry-label">Hazards Nearby</span><span class="telemetry-value" id="telHazards">—</span></div>
+    </div>
+
+    <!-- Freeze Frame -->
+    <div class="freeze-overlay" id="freezeOverlay">
+        <div class="freeze-text">❄️ Frame Captured</div>
+        <div class="freeze-actions">
+            <button class="freeze-btn" style="border-color:var(--cyan)" onclick="saveFrame()">💾 Save</button>
+            <button class="freeze-btn" style="border-color:var(--red)" onclick="unfreeze()">✕ Close</button>
+        </div>
+    </div>
+
+<script>
+// ===== STATE =====
+const state = {
+    mode: 'DRIVING', velocity_kmh: 0,
+    pothole_detected: false, human_detected: false, vehicle_detected: false,
+    pothole_confidence: 0, confidence: 0,
+    latitude: null, longitude: null,
+    hazards: [],
+    detectionHistory: [],
+    reportType: null, reportSeverity: 2,
+    frozen: false, telemetryOpen: false, historyOpen: false, reportOpen: false,
+    lastInferenceMs: 0, fps: 0, frameCount: 0, lastFpsTime: Date.now(),
+};
+
+// ===== CAMERA FEED =====
+const feed = document.getElementById('cameraFeed');
+let feedInterval;
+
+function startFeed() {
+    // Try MJPEG stream first, fallback to periodic fetch
+    feed.src = '/stream';
+    feed.onerror = () => {
+        // Fallback: periodic image fetch
+        feed.src = '';
+        feedInterval = setInterval(() => {
+            if (!state.frozen) {
+                feed.src = '/latest-frame.jpg?t=' + Date.now();
+            }
+        }, 33); // ~30fps
+    };
+}
+
+// ===== DETECTION POLLING =====
+async function pollDetection() {
+    try {
+        const t0 = performance.now();
+        // We don't actually POST an image from browser — we poll the latest detection state
+        // In production, ESP32 sends frames. Here we simulate by checking health.
+        const res = await fetch('/health');
+        const data = await res.json();
+        state.lastInferenceMs = (performance.now() - t0).toFixed(0);
+
+        // Update mode from server
+        if (data.models_loaded) {
+            document.getElementById('telMode').textContent = state.mode;
+        }
+    } catch(e) {}
+}
+
+// ===== GPS =====
+function initGPS() {
+    if ('geolocation' in navigator) {
+        navigator.geolocation.watchPosition(
+            pos => {
+                state.latitude = pos.coords.latitude;
+                state.longitude = pos.coords.longitude;
+                state.velocity_kmh = pos.coords.speed ? pos.coords.speed * 3.6 : state.velocity_kmh;
+                document.getElementById('speedDisplay').textContent = Math.round(state.velocity_kmh) + ' km/h';
+
+                // Update mode based on speed
+                updateMode();
+
+                // Send GPS to backend
+                fetch('/location/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        latitude: state.latitude,
+                        longitude: state.longitude,
+                        accuracy_m: pos.coords.accuracy,
+                        speed_kmh: state.velocity_kmh,
+                    })
+                }).catch(() => {});
+
+                // Fetch nearby hazards
+                fetchHazards();
+            },
+            () => {},
+            { enableHighAccuracy: true, maximumAge: 1000 }
+        );
+    }
+}
+
+function updateMode() {
+    const prev = state.mode;
+    state.mode = state.velocity_kmh <= 10 ? 'REVERSE' : 'DRIVING';
+    const el = document.getElementById('modeIndicator');
+    el.textContent = state.mode;
+    el.className = 'status-mode ' + (state.mode === 'REVERSE' ? 'mode-reverse' : 'mode-driving');
+    if (prev !== state.mode) updateWarnings();
+}
+
+// ===== FETCH NEARBY HAZARDS (500m) =====
+async function fetchHazards() {
+    if (!state.latitude || !state.longitude) return;
+    try {
+        const res = await fetch(`/hazards?lat=${state.latitude}&lng=${state.longitude}&radius_m=500`);
+        const data = await res.json();
+        state.hazards = (data.hazards || []).slice(0, 3);
+        renderHazards();
+    } catch(e) {}
+}
+
+function renderHazards() {
+    const panel = document.getElementById('hazardsPanel');
+    if (!state.hazards.length) { panel.innerHTML = ''; return; }
+
+    panel.innerHTML = state.hazards.map(h => {
+        const dist = h.distance_m < 1000 ? Math.round(h.distance_m) + 'm' : (h.distance_m/1000).toFixed(1) + 'km';
+        const sevClass = h.severity_score <= 1 ? 'low' : h.severity_score <= 3 ? 'med' : h.severity_score <= 5 ? 'high' : 'crit';
+        const sevLabel = h.severity_score <= 1 ? 'Low' : h.severity_score <= 3 ? 'Med' : h.severity_score <= 5 ? 'High' : 'Critical';
+        return `<div class="hazard-card hazard-severity-${sevClass}">
+            <span class="distance">${dist}</span>
+            <span class="severity">Sev ${h.severity_score}</span>
+            <span style="color:rgba(255,255,255,0.6);font-size:11px">${sevLabel}</span>
+        </div>`;
+    }).join('');
+}
+
+// ===== UPDATE UI WARNINGS =====
+function updateWarnings() {
+    const { pothole_detected, human_detected, vehicle_detected, mode, pothole_confidence, confidence } = state;
+
+    // Detection indicators
+    const indP = document.getElementById('indPothole');
+    const indH = document.getElementById('indHuman');
+    const indV = document.getElementById('indVehicle');
+    indP.className = 'indicator-circle' + (pothole_detected ? ' detected-pothole' : '');
+    indH.className = 'indicator-circle' + (human_detected ? ' detected-human' : '');
+    indV.className = 'indicator-circle' + (vehicle_detected ? ' detected-vehicle' : '');
+    document.getElementById('indConfidence').textContent = Math.round(confidence) + '%';
+
+    // Pothole overlay
+    const potholeOvl = document.getElementById('potholeOverlay');
+    potholeOvl.className = 'pothole-overlay' + (pothole_detected ? ' active' : '');
+    if (pothole_detected) {
+        document.getElementById('potholeConfBar').style.width = pothole_confidence + '%';
+    }
+
+    // Rainbow overlay (REVERSE + vehicle)
+    const rainbowOvl = document.getElementById('rainbowOverlay');
+    rainbowOvl.className = 'rainbow-overlay' + (vehicle_detected && mode === 'REVERSE' ? ' active' : '');
+
+    // Vehicle driving warning
+    const vdw = document.getElementById('vehicleDrivingWarn');
+    vdw.className = 'vehicle-driving-warning' + (vehicle_detected && mode === 'DRIVING' ? ' visible' : '');
+
+    // Alert text
+    const alertEl = document.getElementById('alertText');
+    if (human_detected && mode === 'REVERSE') {
+        alertEl.textContent = '⚠️ HUMAN ON ROAD';
+        alertEl.className = 'alert-text alert-human visible';
+    } else if (pothole_detected && !vehicle_detected) {
+        alertEl.className = 'alert-text'; // pothole overlay handles it
+    } else {
+        alertEl.className = 'alert-text';
+    }
+
+    // Telemetry
+    document.getElementById('telFPS').textContent = state.fps + ' fps';
+    document.getElementById('telInference').textContent = state.lastInferenceMs + 'ms';
+    document.getElementById('telPotholeConf').textContent = pothole_confidence.toFixed(1) + '%';
+    document.getElementById('telHazards').textContent = state.hazards.length;
+}
+
+// ===== DETECTION SIMULATION (for demo without ESP32) =====
+// In production, detection results come from POST /detect/dual-mode
+// Here we poll a demo endpoint or use simulated data
+async function demoDetectionLoop() {
+    try {
+        // Try to get latest detection from dashboard stats
+        const res = await fetch('/api/dashboard/stats');
+        const data = await res.json();
+        const dets = data.detections || [];
+        if (dets.length > 0) {
+            const latest = dets[0];
+            state.pothole_confidence = latest.confidence || 0;
+            state.confidence = latest.confidence || 0;
+            state.mode = (latest.mode || 'DRIVING').toUpperCase();
+        }
+        updateWarnings();
+    } catch(e) {}
+}
+
+// ===== TOUCH GESTURES =====
+let touchStartY = 0, touchStartX = 0, touchStartTime = 0, longPressTimer = null;
+
+document.addEventListener('touchstart', e => {
+    touchStartY = e.touches[0].clientY;
+    touchStartX = e.touches[0].clientX;
+    touchStartTime = Date.now();
+
+    // Long press detection (2s)
+    longPressTimer = setTimeout(() => {
+        if (!state.reportOpen && !state.historyOpen) freezeFrame();
+    }, 2000);
+}, { passive: true });
+
+document.addEventListener('touchend', e => {
+    clearTimeout(longPressTimer);
+    const dy = e.changedTouches[0].clientY - touchStartY;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dt = Date.now() - touchStartTime;
+    const screenHeight = window.innerHeight;
+
+    // Swipe up from bottom 20%
+    if (dy < -80 && touchStartY > screenHeight * 0.8 && dt < 500) {
+        openReportPanel();
+        return;
+    }
+
+    // Tap top-right (detection indicator area)
+    if (Math.abs(dy) < 15 && Math.abs(dx) < 15 && dt < 300) {
+        if (touchStartX > window.innerWidth - 80 && touchStartY < 160) {
+            toggleHistory();
+            return;
+        }
+        // Tap status bar
+        if (touchStartY < 60) {
+            toggleTelemetry();
+            return;
+        }
+    }
+}, { passive: true });
+
+// ===== PANEL CONTROLS =====
+function openReportPanel() {
+    state.reportOpen = true;
+    document.getElementById('reportPanel').classList.add('open');
+}
+function closeReportPanel() {
+    state.reportOpen = false;
+    document.getElementById('reportPanel').classList.remove('open');
+}
+function selectReportType(type, btn) {
+    state.reportType = type;
+    document.querySelectorAll('.report-btn').forEach(b => b.style.borderColor = '');
+    btn.style.borderColor = 'var(--cyan)';
+}
+function selectSeverity(level, btn) {
+    state.reportSeverity = level;
+    document.querySelectorAll('.sev-option').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+}
+async function submitReport() {
+    if (!state.reportType) return;
+    if (!state.latitude || !state.longitude) { alert('GPS not available'); return; }
+    try {
+        await fetch('/reports', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                latitude: state.latitude,
+                longitude: state.longitude,
+                confidence: state.pothole_confidence,
+                vehicle_type: 'car',
+            })
+        });
+        closeReportPanel();
+        fetchHazards();
+    } catch(e) { alert('Submit failed'); }
+}
+function toggleHistory() {
+    state.historyOpen = !state.historyOpen;
+    document.getElementById('historyPanel').classList.toggle('open', state.historyOpen);
+}
+function closeHistory() {
+    state.historyOpen = false;
+    document.getElementById('historyPanel').classList.remove('open');
+}
+function toggleTelemetry() {
+    state.telemetryOpen = !state.telemetryOpen;
+    document.getElementById('telemetryPanel').classList.toggle('open', state.telemetryOpen);
+}
+function freezeFrame() {
+    state.frozen = true;
+    document.getElementById('freezeOverlay').classList.add('active');
+}
+function unfreeze() {
+    state.frozen = false;
+    document.getElementById('freezeOverlay').classList.remove('active');
+}
+function saveFrame() {
+    const c = document.createElement('canvas');
+    c.width = feed.naturalWidth || 640;
+    c.height = feed.naturalHeight || 480;
+    c.getContext('2d').drawImage(feed, 0, 0);
+    const a = document.createElement('a');
+    a.href = c.toDataURL('image/jpeg');
+    a.download = 'potholenet_' + Date.now() + '.jpg';
+    a.click();
+    unfreeze();
+}
+
+// ===== FPS COUNTER =====
+function fpsLoop() {
+    state.frameCount++;
+    const now = Date.now();
+    if (now - state.lastFpsTime >= 1000) {
+        state.fps = state.frameCount;
+        state.frameCount = 0;
+        state.lastFpsTime = now;
+    }
+    requestAnimationFrame(fpsLoop);
+}
+
+// ===== INIT =====
+startFeed();
+initGPS();
+fpsLoop();
+setInterval(demoDetectionLoop, 3000); // Poll detection state every 3s
+setInterval(fetchHazards, 5000); // Refresh hazards every 5s
+</script>
+</body>
+</html>

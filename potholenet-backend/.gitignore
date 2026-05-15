@@ -1,0 +1,41 @@
+# Environment variables (contains API keys)
+.env
+
+# Database
+*.db
+
+# Model weights (auto-downloaded on first run)
+*.pt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# ESP32 firmware secrets (WiFi credentials, backend URL)
+esp32_cam_firmware/secrets.h
+
+# Test files
+test_image.jpg
+
+# Retraining queue images (user-uploaded content)
+retraining_queue/*.jpg
+retraining_queue/*.png
+retraining_queue/*.jpeg
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Distribution
+build/
+dist/
+*.egg-info/
