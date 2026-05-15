@@ -48,19 +48,23 @@ export interface SceneConfig {
 export interface AppSettings {
   cameraSource: CameraSource;
   esp32Url: string;
+  backendUrl: string;
   soundsEnabled: boolean;
   voiceCuesEnabled: boolean;
   hapticsEnabled: boolean;
   wakeLockEnabled: boolean;
   detectionThreshold: number;
+  useBackendDetection: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   cameraSource: "phone",
   esp32Url: "http://192.168.4.1",
+  backendUrl: "http://localhost:8000",
   soundsEnabled: true,
   voiceCuesEnabled: true,
   hapticsEnabled: true,
   wakeLockEnabled: true,
   detectionThreshold: 0.5,
+  useBackendDetection: true,
 };

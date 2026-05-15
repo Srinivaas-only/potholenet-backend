@@ -11,12 +11,15 @@ import { useDetection } from "./hooks/useDetection";
 import { useAudioCues } from "./hooks/useAudioCues";
 import { useVibration } from "./hooks/useVibration";
 import { useWakeLock } from "./hooks/useWakeLock";
+import { useHazards } from "./hooks/useHazards";
 import { sendESP32Command } from "./lib/esp32";
+import { submitReport, checkHealth, updateLocation } from "./lib/api";
+import type { HazardItem, HealthResponse } from "./lib/api";
 import {
   Camera, MapPin, Settings, ChevronLeft, AlertTriangle,
   Crosshair, ChevronRight, RotateCcw, Radio, RadioOff,
   Zap, Eye, EyeOff, Volume2, VolumeX, Smartphone, Wifi,
-  ChevronDown, X, Map
+  ChevronDown, X, Map, Server, WifiOff, Activity
 } from "lucide-react";
 
 // ============================================
@@ -183,7 +186,6 @@ function CameraView({
   const [streamError, setStreamError] = useState(false);
   const config = SCENES[scene];
 
-  // Wire up the media ref for detection + propagate error to parent
   useEffect(() => {
     if (isESP32) {
       mediaRef.current = imgRef.current;
@@ -197,17 +199,14 @@ function CameraView({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col px-3 pt-2 pb-1">
-      {/* Camera feed container */}
       <div className="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-[#111]"
         style={{ border: "1px solid #222" }}>
 
-        {/* Phone camera */}
         {!isESP32 && (
           <video ref={phoneCam.videoRef} autoPlay playsInline muted
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
         )}
 
-        {/* ESP32 stream */}
         {isESP32 && (
           <img ref={imgRef} src={`${settings.esp32Url}:81/stream`}
             alt="ESP32 camera" crossOrigin="anonymous"
@@ -216,7 +215,6 @@ function CameraView({
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
         )}
 
-        {/* Overlays */}
         <AlertBorder config={config} />
         <AnimatePresence mode="wait">
           <AlertBanner text={config.alertLabel} color={config.alertLevel} />
@@ -229,7 +227,6 @@ function CameraView({
         {showDisconnect && <DisconnectOverlay />}
       </div>
 
-      {/* Control buttons row */}
       <div className="flex items-center justify-center gap-3 py-3">
         <ControlButton icon={<ChevronLeft size={20} />} label="Pan L"
           onClick={() => sendESP32Command(settings.esp32Url, "left")} />
@@ -268,36 +265,88 @@ function ControlButton({ icon, label, onClick, primary, style }: {
 }
 
 // ============================================
-// MAP VIEW
+// MAP VIEW — Now with REAL hazard data from backend
 // ============================================
-function MapView({ gpsSpeed }: { gpsSpeed: number }) {
+function MapView({ gpsSpeed, hazards, nearbyCount, totalReports, loading }: {
+  gpsSpeed: number;
+  hazards: HazardItem[];
+  nearbyCount: number;
+  totalReports: number;
+  loading: boolean;
+}) {
+  const closestHazard = hazards.length > 0 ? hazards[0] : null;
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-6">
-      <div className="w-full max-w-sm rounded-xl overflow-hidden bg-[#111] border border-[#222] p-6 text-center">
-        <Map size={48} className="text-[#22d3ee] mx-auto mb-4" />
-        <h2 className="text-white text-lg font-semibold mb-2">Hazard Map</h2>
-        <p className="text-[#666] text-sm mb-4">
-          Real-time hazard map showing pothole reports near your location.
-          Requires GPS and internet connection.
+    <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center px-4 py-3 gap-3">
+      {/* Summary card */}
+      <div className="w-full max-w-sm rounded-xl overflow-hidden bg-[#111] border border-[#222] p-5 text-center">
+        <Map size={40} className="text-[#22d3ee] mx-auto mb-3" />
+        <h2 className="text-white text-lg font-semibold mb-1">Hazard Map</h2>
+        <p className="text-[#666] text-xs mb-4">
+          Live pothole reports near your location
         </p>
-        <div className="flex justify-center gap-4 text-sm">
+        <div className="flex justify-center gap-6 text-sm">
           <div className="text-center">
             <div className="text-[#22c55e] font-semibold">{gpsSpeed}</div>
             <div className="text-[#555] text-xs">km/h</div>
           </div>
           <div className="text-center">
-            <div className="text-[#f59e0b] font-semibold">0</div>
+            <div className={`font-semibold ${nearbyCount > 0 ? "text-[#f59e0b]" : "text-[#555]"}`}>
+              {loading ? "..." : nearbyCount}
+            </div>
             <div className="text-[#555] text-xs">Nearby</div>
           </div>
           <div className="text-center">
-            <div className="text-[#ef4444] font-semibold">0</div>
-            <div className="text-[#555] text-xs">Reports</div>
+            <div className={`font-semibold ${totalReports > 0 ? "text-[#ef4444]" : "text-[#555]"}`}>
+              {totalReports}
+            </div>
+            <div className="text-[#555] text-xs">Total</div>
           </div>
         </div>
-        <div className="mt-4 py-3 px-4 bg-[#1a1a1a] rounded-lg text-[#555] text-xs">
-          Connect to PotholeNet backend to load live hazard data
-        </div>
       </div>
+
+      {/* Closest hazard alert */}
+      {closestHazard && (
+        <div className="w-full max-w-sm rounded-xl bg-[#ef444410] border border-[#ef444433] p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle size={16} className="text-[#ef4444]" />
+            <span className="text-[#ef4444] text-sm font-semibold">Closest Hazard</span>
+          </div>
+          <div className="text-[#ccc] text-xs space-y-1">
+            <div>Distance: <span className="text-[#f59e0b] font-semibold">{Math.round(closestHazard.distance_m)}m</span></div>
+            <div>Severity: <span className="text-[#ef4444] font-semibold">{closestHazard.severity_score}</span></div>
+            <div>Location: {closestHazard.latitude.toFixed(4)}, {closestHazard.longitude.toFixed(4)}</div>
+            <div>Last seen: {new Date(closestHazard.last_seen).toLocaleString()}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Hazard list */}
+      {hazards.length > 0 && (
+        <div className="w-full max-w-sm space-y-2">
+          <h3 className="text-[#888] text-xs font-semibold uppercase tracking-wider">All Nearby Hazards</h3>
+          {hazards.slice(0, 10).map((h, i) => (
+            <div key={h.report_id} className="bg-[#111] border border-[#222] rounded-lg p-3 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-[#ef444418] flex items-center justify-center text-[#ef4444] text-xs font-bold">
+                {i + 1}
+              </div>
+              <div className="flex-1 text-xs">
+                <div className="text-[#ccc]">{Math.round(h.distance_m)}m away — Severity: {h.severity_score}</div>
+                <div className="text-[#555]">{new Date(h.last_seen).toLocaleDateString()}</div>
+              </div>
+              <div className="text-right">
+                <div className={`text-xs font-semibold ${h.distance_m < 100 ? "text-[#ef4444]" : h.distance_m < 500 ? "text-[#f59e0b]" : "text-[#22c55e]"}`}>
+                  {h.distance_m < 100 ? "CLOSE" : h.distance_m < 500 ? "NEAR" : "OK"}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!loading && hazards.length === 0 && (
+        <div className="text-[#555] text-xs py-4">No hazards nearby — road is clear!</div>
+      )}
     </div>
   );
 }
@@ -305,8 +354,9 @@ function MapView({ gpsSpeed }: { gpsSpeed: number }) {
 // ============================================
 // SETTINGS VIEW
 // ============================================
-function SettingsView({ settings, onUpdate }: {
+function SettingsView({ settings, onUpdate, backendHealth }: {
   settings: AppSettings; onUpdate: (s: AppSettings) => void;
+  backendHealth: HealthResponse | null;
 }) {
   const toggle = (key: keyof AppSettings) => {
     onUpdate({ ...settings, [key]: !settings[key] });
@@ -343,6 +393,44 @@ function SettingsView({ settings, onUpdate }: {
               }} />
           </SettingsGroup>
         )}
+
+        {/* Backend connection */}
+        <SettingsGroup title="Backend Server">
+          <input type="text" value={settings.backendUrl}
+            onChange={e => onUpdate({ ...settings, backendUrl: e.target.value })}
+            placeholder="http://localhost:8000"
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 8,
+              background: "#1a1a1a", border: "1px solid #333", color: "#fff",
+              fontSize: 14, outline: "none", marginBottom: 12,
+            }} />
+          {backendHealth && (
+            <div className="flex items-center gap-2 text-xs mb-2">
+              <Activity size={12} className={backendHealth.status === "ok" ? "text-[#22c55e]" : "text-[#ef4444]"} />
+              <span className={backendHealth.status === "ok" ? "text-[#22c55e]" : "text-[#ef4444]"}>
+                {backendHealth.status === "ok" ? "Connected" : "Error"}
+              </span>
+              <span className="text-[#555]">
+                | Pothole: {backendHealth.models_loaded.pothole ? "✓" : "✗"}
+                | YOLO: {backendHealth.models_loaded.yolov8 ? "✓" : "✗"}
+                | Reports: {backendHealth.reports_count}
+              </span>
+            </div>
+          )}
+          {!backendHealth && (
+            <div className="flex items-center gap-2 text-xs text-[#666]">
+              <WifiOff size={12} /> Not connected to backend
+            </div>
+          )}
+          <ToggleRow icon={<Server size={16} />} label="Backend ML Detection"
+            checked={settings.useBackendDetection}
+            onChange={() => toggle("useBackendDetection")} />
+          <div className="text-[#555] text-[10px] mt-1">
+            {settings.useBackendDetection
+              ? "✓ Using Roboflow (pothole) + YOLOv8 (objects) on server"
+              : "Using local TF.js (objects only, no pothole detection)"}
+          </div>
+        </SettingsGroup>
 
         {/* Detection */}
         <SettingsGroup title="Detection & Alerts">
@@ -442,10 +530,10 @@ function ToggleRow({ icon, label, checked, onChange }: {
 // ============================================
 // TAB BAR
 // ============================================
-function TabBar({ active, onChange }: { active: TabView; onChange: (t: TabView) => void }) {
+function TabBar({ active, onChange, hazardCount }: { active: TabView; onChange: (t: TabView) => void; hazardCount: number }) {
   const tabs: { id: TabView; icon: React.ReactNode; label: string }[] = [
     { id: "camera", icon: <Camera size={20} />, label: "Camera" },
-    { id: "map", icon: <MapPin size={20} />, label: "Map" },
+    { id: "map", icon: <MapPin size={20} />, label: `Map${hazardCount > 0 ? ` (${hazardCount})` : ""}` },
     { id: "settings", icon: <Settings size={20} />, label: "Settings" },
   ];
   return (
@@ -473,7 +561,7 @@ function TabBar({ active, onChange }: { active: TabView; onChange: (t: TabView) 
 }
 
 // ============================================
-// MAIN APP
+// MAIN APP — Everything Connected
 // ============================================
 export default function PotholeNetApp() {
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -489,17 +577,51 @@ export default function PotholeNetApp() {
   const [tab, setTab] = useState<TabView>("camera");
   const [scene, setScene] = useState<AppScene>("CLEAR");
   const [reportToast, setReportToast] = useState("");
+  const [backendHealth, setBackendHealth] = useState<HealthResponse | null>(null);
 
   const isESP32 = settings.cameraSource === "esp32";
   const { connected: espConnected } = useESPHeartbeat(settings.esp32Url, isESP32);
-  const { speed: gpsSpeed, gpsStatus } = useGPS(true);
+  const { speed: gpsSpeed, coords, gpsStatus } = useGPS(true);
+
+  // ── Backend health check (every 15s) ──
+  useEffect(() => {
+    const doCheck = async () => {
+      try {
+        const health = await checkHealth();
+        setBackendHealth(health);
+      } catch {
+        setBackendHealth(null);
+      }
+    };
+    doCheck();
+    const interval = setInterval(doCheck, 15000);
+    return () => clearInterval(interval);
+  }, [settings.backendUrl]);
+
+  // ── Push GPS to backend (every 5s) ──
+  useEffect(() => {
+    if (!coords) return;
+    const doUpdate = () => {
+      updateLocation({
+        latitude: coords.lat,
+        longitude: coords.lng,
+        speed_kmh: gpsSpeed,
+      }).catch(() => {});
+    };
+    doUpdate();
+    const interval = setInterval(doUpdate, 5000);
+    return () => clearInterval(interval);
+  }, [coords?.lat, coords?.lng, gpsSpeed]);
+
+  // ── Hazard polling from backend ──
+  const { hazards, nearbyCount } = useHazards(coords, true);
 
   // For detection, we need a ref to the video/img element
-  // Use a callback ref to capture whichever is active
   const detectTargetRef = useRef<HTMLVideoElement | HTMLImageElement | null>(null);
 
   const { detections, inferenceMs, modelLoaded } = useDetection(
-    detectTargetRef, tab === "camera", settings.detectionThreshold
+    detectTargetRef, tab === "camera", settings.detectionThreshold,
+    settings.useBackendDetection, gpsSpeed
   );
 
   const [phoneCamError, setPhoneCamError] = useState(false);
@@ -516,12 +638,32 @@ export default function PotholeNetApp() {
   useVibration(scene, settings.hapticsEnabled);
   useWakeLock(settings.wakeLockEnabled && tab === "camera");
 
-  const handleReport = useCallback(() => {
+  // ── Report pothole → POST /reports ──
+  const handleReport = useCallback(async () => {
     if (settings.hapticsEnabled && navigator.vibrate) navigator.vibrate(50);
-    setReportToast("📸 Pothole reported!");
-    setTimeout(() => setReportToast(""), 2000);
-    // TODO: POST to /reports endpoint
-  }, [settings.hapticsEnabled]);
+
+    // Get confidence from current detections
+    const potholeDet = detections.find(d => d.label === "pothole");
+    const confidence = potholeDet ? potholeDet.confidence : 50;
+
+    if (coords) {
+      try {
+        const result = await submitReport({
+          latitude: coords.lat,
+          longitude: coords.lng,
+          confidence,
+          vehicle_type: "car",
+          speed_kmh: gpsSpeed,
+        });
+        setReportToast(`📸 Pothole reported! Severity: ${result.severity_score}${result.is_new ? " (new)" : " (updated)"}`);
+      } catch (err: any) {
+        setReportToast(`⚠️ Report failed: ${err.message}`);
+      }
+    } else {
+      setReportToast("⚠️ No GPS — can't report location");
+    }
+    setTimeout(() => setReportToast(""), 3000);
+  }, [settings.hapticsEnabled, coords, detections, gpsSpeed]);
 
   return (
     <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col overflow-hidden"
@@ -535,6 +677,16 @@ export default function PotholeNetApp() {
           <span style={{ fontSize: 15, fontWeight: 700, color: "#22d3ee" }}>PotholeNet</span>
         </div>
         <div className="flex items-center gap-3">
+          {/* Backend status badge */}
+          <span style={{
+            fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 4,
+            background: backendHealth ? "#22c55e18" : "#ef444418",
+            color: backendHealth ? "#22c55e" : "#ef4444",
+            border: `1px solid ${backendHealth ? "#22c55e33" : "#ef444433"}`,
+          }}>
+            {backendHealth ? "SERVER ✓" : "SERVER ✗"}
+          </span>
+          {/* Camera status */}
           <span style={{
             fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 4,
             background: espConnected || !isESP32 ? "#22c55e18" : "#ef444418",
@@ -543,6 +695,7 @@ export default function PotholeNetApp() {
           }}>
             {isESP32 ? (espConnected ? "ESP32 LIVE" : "ESP32 OFF") : "PHONE CAM"}
           </span>
+          {/* GPS status */}
           <span style={{
             fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 4,
             background: gpsStatus === "locked" ? "#22d3ee18" : "#66666618",
@@ -559,8 +712,18 @@ export default function PotholeNetApp() {
           mediaRef={detectTargetRef} inferenceMs={inferenceMs} modelLoaded={modelLoaded}
           gpsSpeed={gpsSpeed} onReport={handleReport} onCameraError={setPhoneCamError} />
       )}
-      {tab === "map" && <MapView gpsSpeed={gpsSpeed} />}
-      {tab === "settings" && <SettingsView settings={settings} onUpdate={setSettings} />}
+      {tab === "map" && (
+        <MapView
+          gpsSpeed={gpsSpeed}
+          hazards={hazards}
+          nearbyCount={nearbyCount}
+          totalReports={backendHealth?.reports_count || 0}
+          loading={false}
+        />
+      )}
+      {tab === "settings" && (
+        <SettingsView settings={settings} onUpdate={setSettings} backendHealth={backendHealth} />
+      )}
 
       {/* Report toast */}
       <AnimatePresence>
@@ -575,7 +738,7 @@ export default function PotholeNetApp() {
       </AnimatePresence>
 
       {/* Tab bar */}
-      <TabBar active={tab} onChange={setTab} />
+      <TabBar active={tab} onChange={setTab} hazardCount={nearbyCount} />
     </div>
   );
 }
