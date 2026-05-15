@@ -61,7 +61,7 @@ const int   STREAM_PORT = 81;         // MJPEG stream port
 const int   CONTROL_PORT = 80;        // HTTP control port
 const int   JPEG_QUALITY = 18;        // 0-63, higher = smaller file (18 ≈ 5KB/frame at QVGA)
 const framesize_t FRAME_SIZE = FRAMESIZE_QVGA; // Stream: 320x240 for low latency
-const int   STREAM_FPS_CAP = 20;      // Max stream FPS — prevents buffer buildup
+const int   STREAM_FPS_CAP = 30;      // Max stream FPS — prevents buffer buildup
 
 // =========================
 // AI-THINKER ESP32-CAM PIN MAP
