@@ -59,7 +59,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   cameraSource: "phone",
-  esp32Url: "http://192.168.4.1",
+  esp32Url: "http://potholenet.local",
   backendUrl: "http://localhost:8000",
   soundsEnabled: true,
   voiceCuesEnabled: true,

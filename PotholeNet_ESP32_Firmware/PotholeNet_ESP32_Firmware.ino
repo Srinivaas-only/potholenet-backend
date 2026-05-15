@@ -1,24 +1,24 @@
 /*
  * ============================================================
- *  PotholeNet ESP32-CAM Firmware v2.0
- *  Access Point Mode — AI-Thinker ESP32-CAM (built-in USB)
+ *  PotholeNet ESP32-CAM Firmware v3.0
+ *  Station Mode — AI-Thinker ESP32-CAM (built-in USB)
  * ============================================================
  *
  * WHAT IT DOES:
- *   - Creates a Wi-Fi hotspot (Access Point mode)
- *   - Phone connects to the ESP32's Wi-Fi network
+ *   - Connects to your home Wi-Fi network (Station mode)
+ *   - All devices (phone, server, ESP32) on the same network
  *   - Streams live camera feed as MJPEG
  *   - Provides single-frame capture for ML detection
- *   - Camera settings
- *   - Captive portal auto-redirects phone to status page
+ *   - Camera settings via control endpoint
+ *   - Accessible via mDNS: http://potholenet.local
  *
  * ENDPOINTS:
- *   http://192.168.4.1/              → Status page (HTML)
- *   http://192.168.4.1:81/stream     → MJPEG live stream
- *   http://192.168.4.1/capture       → Single JPEG capture
- *   http://192.168.4.1/control       → Control (camera settings)
- *   http://192.168.4.1/heartbeat     → JSON status for app
- *   http://192.168.4.1/status        → Detailed JSON diagnostics
+ *   http://potholenet.local/              → Status page (HTML)
+ *   http://potholenet.local:81/stream     → MJPEG live stream
+ *   http://potholenet.local/capture       → Single JPEG capture
+ *   http://potholenet.local/control       → Control (camera settings)
+ *   http://potholenet.local/heartbeat     → JSON status for app
+ *   http://potholenet.local/status        → Detailed JSON diagnostics
  *
  * FLASHING (Arduino IDE):
  *   1. Install ESP32 board package:
@@ -34,29 +34,27 @@
  *      release once upload begins
  *
  * AFTER FLASHING:
- *   - ESP32 creates its own Wi-Fi hotspot (configurable SSID in secrets.h)
- *   - Connect your phone to this Wi-Fi network
- *   - A captive portal page should auto-appear, or browse to 192.168.4.1
- *   - Open the PotholeNet app — it auto-detects the ESP32 stream
+ *   - Edit secrets.h with your home Wi-Fi SSID and password
+ *   - ESP32 connects to your Wi-Fi network automatically
+ *   - Open Serial Monitor to see the assigned IP address
+ *   - Access via http://potholenet.local or the IP shown in Serial
+ *   - Phone and server must be on the same Wi-Fi network
  *
  * POWER NOTES:
  *   - ESP32-CAM needs stable 5V / 1A+ power supply
  *   - If camera init fails (brown-out), add a 1000µF cap across 5V/GND
- *   - Flash LED draws significant current — use sparingly
  */
 
 #include "esp_camera.h"
 #include <WiFi.h>
-#include <WebServer.h>
-#include <DNSServer.h>
+#include <ESPmDNS.h>
 #include "esp_http_server.h"
-#include "secrets.h"       // SSID & password — copy secrets.h.example to secrets.h and edit
+#include "secrets.h"       // Wi-Fi SSID & password — copy secrets.h.example to secrets.h and edit
 
 // =========================
 // CONFIGURATION
 // =========================
-const int   AP_CHANNEL  = 6;          // Wi-Fi channel (1-13)
-const int   MAX_CLIENTS = 4;          // Max connected devices
+const char* MDNS_NAME  = "potholenet";   // Access via http://potholenet.local
 
 // Stream settings
 const int   STREAM_PORT = 81;         // MJPEG stream port
@@ -89,10 +87,10 @@ const int   FRAME_SIZE = FRAMESIZE_VGA; // Default: 640x480
 // =========================
 httpd_handle_t stream_httpd  = NULL;
 httpd_handle_t control_httpd = NULL;
-DNSServer dnsServer;
 bool cameraReady = false;
 unsigned long bootTime = 0;
 int streamClients = 0;
+bool wifiConnected = false;
 
 // MJPEG boundary
 #define PART_BOUNDARY "123456789000000000000987654321"
@@ -116,6 +114,10 @@ static esp_err_t index_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
+  IPAddress ip = WiFi.localIP();
+  char ipStr[16];
+  snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+
   char html[2048];
   snprintf(html, sizeof(html),
     "<!DOCTYPE html><html><head>"
@@ -133,20 +135,19 @@ static esp_err_t index_handler(httpd_req_t *req) {
     ".btn{display:inline-block;background:#22c55e;color:#000;padding:10px 20px;border-radius:8px;"
     "font-weight:bold;margin:8px 4px;text-decoration:none}"
     ".btn:hover{background:#16a34a}"
-    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}"
     "img{width:100%%;border-radius:8px;margin-top:8px}"
     "</style></head><body>"
     "<h1>&#128663; PotholeNet ESP32-CAM</h1>"
 
     "<div class='card'>"
     "<div class='label'>Status</div>"
-    "<div class='value'>&#9989; Online &mdash; Camera %s</div>"
+    "<div class='value'>&#9989; Online &mdash; Camera %s &mdash; Wi-Fi Connected</div>"
     "</div>"
 
     "<div class='card'>"
     "<div class='label'>Live Stream</div>"
-    "<div class='value'><a href='http://192.168.4.1:81/stream'>http://192.168.4.1:81/stream</a></div>"
-    "<img src='http://192.168.4.1/capture' alt='Camera feed'>"
+    "<div class='value'><a href='http://%s:81/stream'>http://%s:81/stream</a></div>"
+    "<img src='http://%s/capture' alt='Camera feed'>"
     "</div>"
 
     "<div class='card'>"
@@ -155,21 +156,22 @@ static esp_err_t index_handler(httpd_req_t *req) {
     "</div>"
 
     "<div class='card'>"
-    "<div class='label'>Hardware</div>"
-    "<div class='value'>AI-Thinker ESP32-CAM<br>Mode: Wi-Fi AP<br>"
-    "SSID: %s<br>Heap: %d KB</div>"
+    "<div class='label'>Network</div>"
+    "<div class='value'>AI-Thinker ESP32-CAM<br>Mode: Wi-Fi Station<br>"
+    "SSID: %s<br>IP: %s<br>Heap: %d KB</div>"
     "</div>"
 
     "<div class='card'>"
     "<div class='label'>Open PotholeNet App</div>"
-    "<div class='value'>Connect your phone to <b>%s</b> Wi-Fi, then open the PotholeNet app.</div>"
+    "<div class='value'>Make sure your phone is on the same Wi-Fi network (<b>%s</b>), then open the PotholeNet app.</div>"
     "</div>"
 
     "</body></html>",
     cameraReady ? "Ready" : "FAILED",
-    AP_SSID,
+    ipStr, ipStr, ipStr,
+    WIFI_SSID, ipStr,
     ESP.getFreeHeap() / 1024,
-    AP_SSID
+    WIFI_SSID
   );
 
   httpd_resp_sendstr(req, html);
@@ -347,9 +349,9 @@ static esp_err_t control_handler(httpd_req_t *req) {
 static esp_err_t heartbeat_handler(httpd_req_t *req) {
   char buf[128];
   snprintf(buf, sizeof(buf),
-    "{\"alive\":true,\"uptime\":%lu,\"clients\":%d,\"heap\":%lu,\"camera\":%s}",
+    "{\"alive\":true,\"uptime\":%lu,\"wifi_connected\":%s,\"heap\":%lu,\"camera\":%s}",
     (millis() - bootTime) / 1000,
-    WiFi.softAPgetStationNum(),
+    WiFi.status() == WL_CONNECTED ? "true" : "false",
     (unsigned long)ESP.getFreeHeap(),
     cameraReady ? "true" : "false"
   );
@@ -361,12 +363,17 @@ static esp_err_t heartbeat_handler(httpd_req_t *req) {
 // HANDLER: Detailed status (for diagnostics)
 // =========================
 static esp_err_t status_handler(httpd_req_t *req) {
+  IPAddress ip = WiFi.localIP();
+  char ipStr[16];
+  snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+
   char buf[512];
   snprintf(buf, sizeof(buf),
     "{"
-    "\"ip\":\"192.168.4.1\","
+    "\"ip\":\"%s\","
     "\"ssid\":\"%s\","
-    "\"clients\":%d,"
+    "\"wifi_connected\":%s,"
+    "\"rssi\":%d,"
     "\"uptime\":%lu,"
     "\"heap_free\":%lu,"
     "\"heap_min\":%lu,"
@@ -374,8 +381,10 @@ static esp_err_t status_handler(httpd_req_t *req) {
     "\"stream_clients\":%d,"
     "\"resolution\":\"VGA\""
     "}",
-    AP_SSID,
-    WiFi.softAPgetStationNum(),
+    ipStr,
+    WIFI_SSID,
+    WiFi.status() == WL_CONNECTED ? "true" : "false",
+    WiFi.RSSI(),
     (millis() - bootTime) / 1000,
     (unsigned long)ESP.getFreeHeap(),
     (unsigned long)ESP.getMinFreeHeap(),
@@ -448,8 +457,8 @@ void setup() {
   Serial.setDebugOutput(true);
   Serial.println("\n\n");
   Serial.println("╔══════════════════════════════════════╗");
-  Serial.println("║    PotholeNet ESP32-CAM  v2.0       ║");
-  Serial.println("║    Access Point Mode                 ║");
+  Serial.println("║    PotholeNet ESP32-CAM  v3.0       ║");
+  Serial.println("║    Station Mode (Wi-Fi Client)       ║");
   Serial.println("╚══════════════════════════════════════╝");
   Serial.println();
 
@@ -529,26 +538,48 @@ void setup() {
   s->set_lenc(s, 1);            // Lens correction
   s->set_dcw(s, 1);             // Downsize enable
 
-  // ── Wi-Fi AP ──
-  Serial.println("[WIFI] Starting Access Point...");
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, 0, MAX_CLIENTS);
-  IPAddress IP = WiFi.softAPIP();
+  // ── Wi-Fi Station ──
+  Serial.printf("[WIFI] Connecting to \"%s\"...\n", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  // ── DNS Server for captive portal ──
-  // Redirect all DNS queries to our IP so phone auto-opens portal
-  dnsServer.start(53, "*", IP);
+  // Wait for connection (timeout after 20 seconds)
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  Serial.println();
 
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = true;
+    IPAddress IP = WiFi.localIP();
+    Serial.printf("[WIFI] Connected! IP: %s (RSSI: %d dBm)\n",
+      IP.toString().c_str(), WiFi.RSSI());
+  } else {
+    wifiConnected = false;
+    Serial.println("[WIFI] FAILED to connect! Check SSID/password in secrets.h");
+    Serial.println("[WIFI] Will retry in background...");
+  }
+
+  // ── mDNS — access via http://potholenet.local ──
+  if (wifiConnected && MDNS.begin(MDNS_NAME)) {
+    Serial.printf("[MDNS] Started! Access at http://%s.local\n", MDNS_NAME);
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addService("http", "tcp", 81);
+  }
+
+  IPAddress IP = WiFi.localIP();
   Serial.println();
   Serial.println("╔══════════════════════════════════════╗");
   Serial.println("║  PotholeNet ESP32-CAM Ready!         ║");
   Serial.println("╠══════════════════════════════════════╣");
-  Serial.printf("║  SSID:     %-25s║\n", AP_SSID);
-  Serial.printf("║  Password: %-25s║\n", AP_PASSWORD);
+  Serial.printf("║  SSID:     %-25s║\n", WIFI_SSID);
   Serial.printf("║  IP:       %-25s║\n", IP.toString().c_str());
+  Serial.printf("║  mDNS:     http://%-17s║\n", String(MDNS_NAME) + ".local");
   Serial.printf("║  Stream:   http://%s:81/stream  ║\n", IP.toString().c_str());
   Serial.printf("║  Capture:  http://%s/capture     ║\n", IP.toString().c_str());
-  Serial.printf("║  Heartbeat: http://%s/heartbeat   ║\n", IP.toString().c_str());
   Serial.printf("║  Heap:     %-5lu bytes free        ║\n", (unsigned long)ESP.getFreeHeap());
   Serial.println("╚══════════════════════════════════════╝");
 
@@ -562,20 +593,35 @@ void setup() {
 // LOOP
 // =========================
 void loop() {
-  // Process DNS requests for captive portal
-  dnsServer.processNextRequest();
+  // Wi-Fi reconnection check
+  static unsigned long lastWifiCheck = 0;
+  if (millis() - lastWifiCheck > 5000) {
+    if (WiFi.status() != WL_CONNECTED) {
+      if (wifiConnected) {
+        Serial.println("[WIFI] Connection lost! Reconnecting...");
+        wifiConnected = false;
+      }
+      WiFi.reconnect();
+    } else if (!wifiConnected) {
+      wifiConnected = true;
+      IPAddress IP = WiFi.localIP();
+      Serial.printf("[WIFI] Reconnected! IP: %s\n", IP.toString().c_str());
+    }
+    lastWifiCheck = millis();
+  }
 
   // Periodic health log (every 30 seconds)
-    static unsigned long lastLog = 0;
-    if (millis() - lastLog > 30000) {
-      Serial.printf("[HEALTH] Heap: %lu KB | Clients: %d | Stream: %d | Uptime: %lu s\n",
-        (unsigned long)ESP.getFreeHeap() / 1024,
-        WiFi.softAPgetStationNum(),
-        streamClients,
-        (millis() - bootTime) / 1000
-      );
-      lastLog = millis();
-    }
+  static unsigned long lastLog = 0;
+  if (millis() - lastLog > 30000) {
+    Serial.printf("[HEALTH] Heap: %lu KB | WiFi: %s | RSSI: %d dBm | Stream: %d | Uptime: %lu s\n",
+      (unsigned long)ESP.getFreeHeap() / 1024,
+      WiFi.status() == WL_CONNECTED ? "OK" : "DOWN",
+      WiFi.RSSI(),
+      streamClients,
+      (millis() - bootTime) / 1000
+    );
+    lastLog = millis();
+  }
 
   delay(10);  // Small delay to prevent watchdog issues
 }
